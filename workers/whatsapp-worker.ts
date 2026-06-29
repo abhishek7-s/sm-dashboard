@@ -180,6 +180,182 @@ function getMessageContact(message: WAMessage) {
   };
 }
 
+async function processPendingMessages(sock: WhatsAppSocket) {
+  const pendingMessages = await prisma.message.findMany({
+    where: { status: "PENDING", direction: "OUTBOUND" },
+    include: { conversation: true },
+    take: 10,
+  });
+
+  for (const msg of pendingMessages) {
+    const jid = msg.conversation.externalId;
+    if (!jid) continue;
+    try {
+      const sentMsg = await sock.sendMessage(jid, { text: msg.body || "" });
+      await prisma.message.update({
+        where: { id: msg.id },
+        data: {
+          status: "SENT",
+          externalId: `${jid}:${sentMsg?.key.id}`,
+          sentAt: new Date(),
+        },
+      });
+      logger.info({ messageId: msg.id, jid }, "Sent pending WhatsApp message");
+    } catch (err) {
+      logger.error({ error: err, messageId: msg.id }, "Failed to send pending WhatsApp message");
+      await prisma.message.update({
+        where: { id: msg.id },
+        data: { status: "FAILED", failureReason: String(err), failedAt: new Date() },
+      });
+    }
+  }
+}
+
+function isQuietHours(): boolean {
+  const hour = new Date().getHours();
+  return hour >= 22 || hour < 8;
+}
+
+function getJitteredDelay(delaySeconds: number, jitterSeconds: number): number {
+  const jitter = (Math.random() * 2 - 1) * jitterSeconds;
+  return Math.max(10, delaySeconds + jitter) * 1000;
+}
+
+let queueNextSendAt: number = 0;
+
+async function processQueueJobs(sock: WhatsAppSocket) {
+  // Don't send during quiet hours
+  if (isQuietHours()) return;
+  // Rate-limit: only process one recipient at a time
+  if (Date.now() < queueNextSendAt) return;
+
+  // Find the oldest active job
+  const job = await prisma.messageQueueJob.findFirst({
+    where: { status: { in: ["QUEUED", "RUNNING"] } },
+    orderBy: { createdAt: "asc" },
+    include: {
+      recipients: {
+        where: {
+          status: "PENDING",
+          nextAttemptAt: { lte: new Date() },
+        },
+        orderBy: { position: "asc" },
+        take: 1,
+        include: { contact: true },
+      },
+    },
+  });
+
+  if (!job) return;
+
+  const recipient = job.recipients[0];
+  if (!recipient) {
+    // All recipients processed — mark job complete
+    const remaining = await prisma.messageQueueRecipient.count({
+      where: { queueJobId: job.id, status: { in: ["PENDING", "SENDING"] } },
+    });
+    if (remaining === 0) {
+      await prisma.messageQueueJob.update({
+        where: { id: job.id },
+        data: { status: "COMPLETED", completedAt: new Date() },
+      });
+      logger.info({ jobId: job.id }, "Broadcast job completed");
+    }
+    return;
+  }
+
+  // Mark job as running
+  if (job.status === "QUEUED") {
+    await prisma.messageQueueJob.update({
+      where: { id: job.id },
+      data: { status: "RUNNING", startedAt: new Date() },
+    });
+  }
+
+  // Mark recipient as sending
+  await prisma.messageQueueRecipient.update({
+    where: { id: recipient.id },
+    data: { status: "SENDING", attempts: { increment: 1 } },
+  });
+
+  // Find the conversation for this contact
+  const conversation = await prisma.conversation.findFirst({
+    where: {
+      channelAccountId: job.channelAccountId,
+      participants: { some: { contactId: recipient.contactId } },
+      type: "DIRECT",
+    },
+  });
+
+  const jid = conversation?.externalId ?? recipient.contact.externalId;
+
+  try {
+    const sentMsg = await sock.sendMessage(jid, { text: job.body });
+    const now = new Date();
+    await prisma.messageQueueRecipient.update({
+      where: { id: recipient.id },
+      data: { status: "SENT", sentAt: now },
+    });
+
+    // Persist the message in the conversation so it shows in the chat
+    if (conversation && sentMsg?.key.id) {
+      const scopedExternalId = `${jid}:${sentMsg.key.id}`;
+      await prisma.message.upsert({
+        where: {
+          channelAccountId_externalId: {
+            channelAccountId: job.channelAccountId,
+            externalId: scopedExternalId,
+          },
+        },
+        create: {
+          channelAccountId: job.channelAccountId,
+          conversationId: conversation.id,
+          contactId: recipient.contactId,
+          externalId: scopedExternalId,
+          direction: "OUTBOUND",
+          kind: "TEXT",
+          status: "SENT",
+          body: job.body,
+          sentAt: now,
+        },
+        update: { status: "SENT", sentAt: now },
+      });
+    }
+
+    logger.info(
+      { jobId: job.id, recipientId: recipient.id, jid },
+      "Sent queued broadcast message",
+    );
+
+  } catch (err) {
+    const attempts = recipient.attempts + 1;
+    const maxAttempts = 3;
+    if (attempts >= maxAttempts) {
+      await prisma.messageQueueRecipient.update({
+        where: { id: recipient.id },
+        data: {
+          status: "FAILED",
+          failureReason: String(err),
+        },
+      });
+      logger.error({ error: err, jobId: job.id, recipientId: recipient.id }, "Broadcast recipient permanently failed");
+    } else {
+      const retryDelay = getJitteredDelay(job.delaySeconds, job.jitterSeconds);
+      await prisma.messageQueueRecipient.update({
+        where: { id: recipient.id },
+        data: {
+          status: "PENDING",
+          nextAttemptAt: new Date(Date.now() + retryDelay),
+        },
+      });
+      logger.warn({ error: err, jobId: job.id, attempt: attempts }, "Broadcast recipient failed, will retry");
+    }
+  }
+
+  // Schedule next send time
+  queueNextSendAt = Date.now() + getJitteredDelay(job.delaySeconds, job.jitterSeconds);
+}
+
 async function startWhatsAppWorker() {
   const { state, saveCreds } = await createMultiFileAuthState(authDir);
 
@@ -210,42 +386,8 @@ async function startWhatsAppWorker() {
       if (sendPollTimer) clearInterval(sendPollTimer);
       sendPollTimer = setInterval(async () => {
         try {
-          const pendingMessages = await prisma.message.findMany({
-            where: {
-              status: "PENDING",
-              direction: "OUTBOUND",
-            },
-            include: { conversation: true },
-            take: 10,
-          });
-
-          for (const msg of pendingMessages) {
-            const jid = msg.conversation.externalId;
-            if (!jid) continue;
-
-            try {
-              const sentMsg = await sock.sendMessage(jid, { text: msg.body || "" });
-              await prisma.message.update({
-                where: { id: msg.id },
-                data: {
-                  status: "SENT",
-                  externalId: `${jid}:${sentMsg?.key.id}`,
-                  sentAt: new Date(),
-                },
-              });
-              logger.info({ messageId: msg.id, jid }, "Sent pending WhatsApp message");
-            } catch (err) {
-              logger.error({ error: err, messageId: msg.id }, "Failed to send pending WhatsApp message");
-              await prisma.message.update({
-                where: { id: msg.id },
-                data: {
-                  status: "FAILED",
-                  failureReason: String(err),
-                  failedAt: new Date(),
-                },
-              });
-            }
-          }
+          await processPendingMessages(sock);
+          await processQueueJobs(sock);
         } catch (err) {
           logger.error({ error: err }, "Error in send poller");
         }

@@ -4,6 +4,9 @@ import Link from "next/link";
 import { MessageScrollPane } from "./components/message-scroll-pane";
 import { ChatInput } from "./components/chat-input";
 import { AutoRefresher } from "./components/auto-refresher";
+import { BroadcastModal } from "./components/broadcast-modal";
+import { QueuePanel } from "./components/queue-panel";
+import { BroadcastButton } from "./components/broadcast-button";
 
 export const dynamic = "force-dynamic";
 
@@ -92,6 +95,7 @@ async function getDashboardData(selectedConversationId?: string) {
       contactsCount: 0,
       conversationsCount: 0,
       conversations: [],
+      contacts: [],
       messages: [],
       unreadCount: 0,
       messagesCount: 0,
@@ -105,6 +109,7 @@ async function getDashboardData(selectedConversationId?: string) {
     conversationsCount,
     unreadAggregate,
     messagesCount,
+    contacts,
     conversations,
     queueJobs,
   ] = await Promise.all([
@@ -127,9 +132,21 @@ async function getDashboardData(selectedConversationId?: string) {
       },
     }),
     prisma.message.count({
+      where: { channelAccountId: account.id },
+    }),
+    prisma.contact.findMany({
       where: {
         channelAccountId: account.id,
+        isGroup: false,
+        NOT: [
+          { displayName: { endsWith: "@lid" } },
+          { displayName: { endsWith: "@s.whatsapp.net" } },
+          { displayName: { endsWith: "@g.us" } },
+        ],
       },
+      orderBy: { displayName: "asc" },
+      take: 300,
+      select: { id: true, displayName: true, phoneNumber: true, externalId: true },
     }),
     prisma.conversation.findMany({
       where: {
@@ -165,15 +182,14 @@ async function getDashboardData(selectedConversationId?: string) {
       },
     }),
     prisma.messageQueueJob.findMany({
-      where: {
-        channelAccountId: account.id,
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-      take: 6,
+      where: { channelAccountId: account.id },
+      orderBy: { createdAt: "desc" },
+      take: 10,
       include: {
-        recipients: true,
+        recipients: {
+          include: { contact: { select: { displayName: true } } },
+          orderBy: { position: "asc" },
+        },
       },
     }),
   ]);
@@ -224,6 +240,7 @@ async function getDashboardData(selectedConversationId?: string) {
     account,
     contactsCount,
     conversationsCount,
+    contacts,
     conversations,
     messages,
     messagesCount,
@@ -238,6 +255,7 @@ export default async function Home({ searchParams }: PageProps) {
   const {
     account,
     contactsCount,
+    contacts,
     conversations,
     conversationsCount,
     messages,
@@ -302,12 +320,7 @@ export default async function Home({ searchParams }: PageProps) {
                   ? "Baileys connected"
                   : "Baileys offline"}
               </div>
-              <button
-                className="rounded-lg bg-[#183229] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-[#244a3d]"
-                type="button"
-              >
-                New queue
-              </button>
+              <BroadcastButton contacts={contacts} />
             </div>
           </header>
 
@@ -496,37 +509,11 @@ export default async function Home({ searchParams }: PageProps) {
 
               <section className="border-b border-black/10 p-4">
                 <div className="flex items-center justify-between">
-                  <p className="text-sm font-semibold text-[#10241d]">
-                    Send Queue
-                  </p>
-                  <span className="text-xs font-medium text-[#667871]">
-                    {whatsappSendPolicy.defaultDelaySeconds}s delay
-                  </span>
+                  <p className="text-sm font-semibold text-[#10241d]">Send Queue</p>
+                  <span className="text-xs font-medium text-[#667871]">{whatsappSendPolicy.defaultDelaySeconds}s delay</span>
                 </div>
-                <div className="mt-4 space-y-2">
-                  {queueJobs.length === 0 ? (
-                    <div className="rounded-lg border border-black/10 bg-white p-3 text-sm text-[#667871]">
-                      No queue jobs yet.
-                    </div>
-                  ) : null}
-                  {queueJobs.map((job) => (
-                    <div
-                      key={job.id}
-                      className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 rounded-lg border border-black/10 bg-white p-3"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium">
-                          {job.title}
-                        </p>
-                        <p className="mt-1 text-xs text-[#667871]">
-                          {job.status} · {job.recipients.length} recipients
-                        </p>
-                      </div>
-                      <span className="text-xs font-semibold text-[#183229]">
-                        {job.delaySeconds}s
-                      </span>
-                    </div>
-                  ))}
+                <div className="mt-4">
+                  <QueuePanel jobs={queueJobs} />
                 </div>
               </section>
 
