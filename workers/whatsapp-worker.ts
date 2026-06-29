@@ -8,6 +8,7 @@ import makeWASocket, {
 import pino from "pino";
 import qrcode from "qrcode-terminal";
 import path from "node:path";
+import { prisma } from "../lib/db.ts";
 import {
   getHistoryBackfillSeeds,
   markWhatsAppChannelDisconnected,
@@ -25,9 +26,9 @@ const authDir = path.resolve(
   process.env.WHATSAPP_AUTH_DIR ?? ".data/baileys-auth",
 );
 const historySyncLimits = {
-  chats: Number(process.env.WHATSAPP_HISTORY_CHAT_LIMIT ?? 250),
-  contacts: Number(process.env.WHATSAPP_HISTORY_CONTACT_LIMIT ?? 250),
-  messages: Number(process.env.WHATSAPP_HISTORY_MESSAGE_LIMIT ?? 100),
+  chats: Number(process.env.WHATSAPP_HISTORY_CHAT_LIMIT ?? 100),
+  contacts: Number(process.env.WHATSAPP_HISTORY_CONTACT_LIMIT ?? 100),
+  messages: Number(process.env.WHATSAPP_HISTORY_MESSAGE_LIMIT ?? 1000),
 };
 const historyBackfill = {
   enabled: process.env.WHATSAPP_HISTORY_BACKFILL_ENABLED !== "false",
@@ -41,6 +42,7 @@ const historyBackfill = {
 let activeSocket: WhatsAppSocket | undefined;
 let reconnectAttempts = 0;
 let reconnectTimer: NodeJS.Timeout | undefined;
+let sendPollTimer: NodeJS.Timeout | undefined;
 let shuttingDown = false;
 
 const logger = pino({
@@ -204,6 +206,51 @@ async function startWhatsAppWorker() {
       reconnectAttempts = 0;
       await upsertWhatsAppChannelAccount(sock.user);
       void requestHistoryBackfill(sock);
+
+      if (sendPollTimer) clearInterval(sendPollTimer);
+      sendPollTimer = setInterval(async () => {
+        try {
+          const pendingMessages = await prisma.message.findMany({
+            where: {
+              status: "PENDING",
+              direction: "OUTBOUND",
+            },
+            include: { conversation: true },
+            take: 10,
+          });
+
+          for (const msg of pendingMessages) {
+            const jid = msg.conversation.externalId;
+            if (!jid) continue;
+
+            try {
+              const sentMsg = await sock.sendMessage(jid, { text: msg.body || "" });
+              await prisma.message.update({
+                where: { id: msg.id },
+                data: {
+                  status: "SENT",
+                  externalId: `${jid}:${sentMsg?.key.id}`,
+                  sentAt: new Date(),
+                },
+              });
+              logger.info({ messageId: msg.id, jid }, "Sent pending WhatsApp message");
+            } catch (err) {
+              logger.error({ error: err, messageId: msg.id }, "Failed to send pending WhatsApp message");
+              await prisma.message.update({
+                where: { id: msg.id },
+                data: {
+                  status: "FAILED",
+                  failureReason: String(err),
+                  failedAt: new Date(),
+                },
+              });
+            }
+          }
+        } catch (err) {
+          logger.error({ error: err }, "Error in send poller");
+        }
+      }, 1000);
+
       logger.info(
         {
           authDir,
@@ -230,9 +277,11 @@ async function startWhatsAppWorker() {
 
       if (shouldReconnect) {
         await markWhatsAppChannelDisconnected();
+        if (sendPollTimer) clearInterval(sendPollTimer);
         scheduleReconnect();
       } else {
         await markWhatsAppChannelDisconnected();
+        if (sendPollTimer) clearInterval(sendPollTimer);
         logger.error(
           `WhatsApp logged out. Delete ${authDir} and run the worker again to relink.`,
         );
@@ -274,9 +323,17 @@ async function startWhatsAppWorker() {
   });
 
   sock.ev.on("messaging-history.set", async (history) => {
-    const chats = history.chats.slice(0, historySyncLimits.chats);
+    const sortedChats = [...history.chats].sort((a, b) => 
+      (Number(b.conversationTimestamp) || 0) - (Number(a.conversationTimestamp) || 0)
+    );
+    const chats = sortedChats.slice(0, historySyncLimits.chats);
+    
     const contacts = history.contacts.slice(0, historySyncLimits.contacts);
-    const messages = history.messages.slice(0, historySyncLimits.messages);
+    
+    const sortedMessages = [...history.messages].sort((a, b) =>
+      (Number(b.messageTimestamp) || 0) - (Number(a.messageTimestamp) || 0)
+    );
+    const messages = sortedMessages.slice(0, historySyncLimits.messages);
 
     logger.info(
       {
@@ -352,6 +409,9 @@ async function stopWhatsAppWorker() {
   shuttingDown = true;
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
+  }
+  if (sendPollTimer) {
+    clearInterval(sendPollTimer);
   }
 
   logger.info("Stopping WhatsApp worker");

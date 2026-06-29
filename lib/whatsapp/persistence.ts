@@ -44,6 +44,9 @@ export type HistoryBackfillSeed = {
 };
 
 function getPhoneFromJid(jid: string) {
+  if (!jid.endsWith("@s.whatsapp.net")) {
+    return null;
+  }
   const [user] = jid.split("@");
   return user?.replace(/\D/g, "") || null;
 }
@@ -267,6 +270,10 @@ export async function persistWhatsAppChat(chat: Chat) {
   if (!chat.id) {
     return null;
   }
+  
+  if (chat.id.endsWith('@lid') && !chat.name) {
+    return null;
+  }
 
   const channelAccount = await upsertWhatsAppChannelAccount();
   const group = isGroupJid(chat.id);
@@ -438,6 +445,10 @@ export async function persistWhatsAppMessage({
     return null;
   }
 
+  if (getContentKind(message) === MessageKind.SYSTEM) {
+    return null;
+  }
+
   const channelAccount = await upsertWhatsAppChannelAccount();
   const scopedExternalMessageId = `${remoteJid}:${externalMessageId}`;
   const existingMessage = await prisma.message.findUnique({
@@ -458,11 +469,12 @@ export async function persistWhatsAppMessage({
   const shouldIncrementUnread =
     !existingMessage && !fromMe && upsertType === "notify";
   const body = getMessageBody(message);
-  const displayName =
-    message.pushName ??
+  const pushName = fromMe ? undefined : (message.pushName || undefined);
+  const fallbackName =
     getPhoneFromJid(contactJid ?? remoteJid) ??
     contactJid ??
     remoteJid;
+  const createDisplayName = pushName ?? fallbackName;
 
   const contact = contactJid
     ? await prisma.contact.upsert({
@@ -476,7 +488,7 @@ export async function persistWhatsAppMessage({
           channelAccountId: channelAccount.id,
           externalId: contactJid,
           phoneNumber: getPhoneFromJid(contactJid),
-          displayName,
+          displayName: createDisplayName,
           isGroup: false,
           metadata: toJson({
             participant: message.key.participant,
@@ -484,7 +496,7 @@ export async function persistWhatsAppMessage({
           }),
         },
         update: {
-          displayName,
+          displayName: pushName,
           phoneNumber: getPhoneFromJid(contactJid),
           metadata: toJson({
             participant: message.key.participant,
@@ -505,13 +517,13 @@ export async function persistWhatsAppMessage({
       channelAccountId: channelAccount.id,
       externalId: remoteJid,
       type: group ? ConversationType.GROUP : ConversationType.DIRECT,
-      title: group ? remoteJid : displayName,
+      title: group ? remoteJid : createDisplayName,
       lastMessageAt: sentAt,
       unreadCount: shouldIncrementUnread ? 1 : 0,
       metadata: toJson({ remoteJid }),
     },
     update: {
-      title: group ? remoteJid : displayName,
+      title: group ? undefined : pushName,
       lastMessageAt: sentAt,
       unreadCount: shouldIncrementUnread
         ? {

@@ -2,6 +2,8 @@ import { prisma } from "@/lib/db";
 import { whatsappSendPolicy } from "@/lib/queue/message-policy";
 import Link from "next/link";
 import { MessageScrollPane } from "./components/message-scroll-pane";
+import { ChatInput } from "./components/chat-input";
+import { AutoRefresher } from "./components/auto-refresher";
 
 export const dynamic = "force-dynamic";
 
@@ -31,7 +33,7 @@ function getInitials(name: string) {
 
   return parts
     .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
+    .map((part) => Array.from(part)[0]?.toUpperCase() || "")
     .join("");
 }
 
@@ -106,42 +108,89 @@ async function getDashboardData(selectedConversationId?: string) {
     conversations,
     queueJobs,
   ] = await Promise.all([
-      prisma.contact.count({
-        where: {
-          channelAccountId: account.id,
-        },
-      }),
-      prisma.conversation.count({
-        where: {
-          channelAccountId: account.id,
-        },
-      }),
-      prisma.conversation.aggregate({
-        where: {
-          channelAccountId: account.id,
-        },
-        _sum: {
-          unreadCount: true,
-        },
-      }),
-      prisma.message.count({
-        where: {
-          channelAccountId: account.id,
-        },
-      }),
-      prisma.conversation.findMany({
-        where: {
-          channelAccountId: account.id,
-        },
-        orderBy: [
-          {
-            lastMessageAt: "desc",
+    prisma.contact.count({
+      where: {
+        channelAccountId: account.id,
+      },
+    }),
+    prisma.conversation.count({
+      where: {
+        channelAccountId: account.id,
+      },
+    }),
+    prisma.conversation.aggregate({
+      where: {
+        channelAccountId: account.id,
+      },
+      _sum: {
+        unreadCount: true,
+      },
+    }),
+    prisma.message.count({
+      where: {
+        channelAccountId: account.id,
+      },
+    }),
+    prisma.conversation.findMany({
+      where: {
+        channelAccountId: account.id,
+        NOT: {
+          title: {
+            endsWith: "@lid",
           },
-          {
-            updatedAt: "desc",
+        },
+      },
+      orderBy: [
+        {
+          lastMessageAt: "desc",
+        },
+        {
+          updatedAt: "desc",
+        },
+      ],
+      take: 30,
+      include: {
+        participants: {
+          take: 3,
+          include: {
+            contact: true,
           },
-        ],
-        take: 30,
+        },
+        messages: {
+          orderBy: {
+            sentAt: "desc",
+          },
+          take: 1,
+        },
+      },
+    }),
+    prisma.messageQueueJob.findMany({
+      where: {
+        channelAccountId: account.id,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+      take: 6,
+      include: {
+        recipients: true,
+      },
+    }),
+  ]);
+
+  const selectedConversation =
+    conversations.find((item) => item.id === selectedConversationId) ??
+    (selectedConversationId
+      ? await prisma.conversation.findFirst({
+        where: {
+          id: selectedConversationId,
+          channelAccountId: account.id,
+          NOT: {
+            title: {
+              endsWith: "@lid",
+            },
+          },
+        },
         include: {
           participants: {
             take: 3,
@@ -156,56 +205,19 @@ async function getDashboardData(selectedConversationId?: string) {
             take: 1,
           },
         },
-      }),
-      prisma.messageQueueJob.findMany({
-        where: {
-          channelAccountId: account.id,
-        },
-        orderBy: {
-          createdAt: "desc",
-        },
-        take: 6,
-        include: {
-          recipients: true,
-        },
-      }),
-    ]);
-
-  const selectedConversation =
-    conversations.find((item) => item.id === selectedConversationId) ??
-    (selectedConversationId
-      ? await prisma.conversation.findFirst({
-          where: {
-            id: selectedConversationId,
-            channelAccountId: account.id,
-          },
-          include: {
-            participants: {
-              take: 3,
-              include: {
-                contact: true,
-              },
-            },
-            messages: {
-              orderBy: {
-                sentAt: "desc",
-              },
-              take: 1,
-            },
-          },
-        })
+      })
       : null) ??
     conversations[0];
   const messages = selectedConversation
     ? await prisma.message.findMany({
-        where: {
-          conversationId: selectedConversation.id,
-        },
-        orderBy: {
-          sentAt: "asc",
-        },
-        take: 80,
-      })
+      where: {
+        conversationId: selectedConversation.id,
+      },
+      orderBy: {
+        sentAt: "asc",
+      },
+      take: 80,
+    })
     : [];
 
   return {
@@ -241,6 +253,10 @@ export default async function Home({ searchParams }: PageProps) {
     ? normalizePhone(selectedParticipant.phoneNumber)
     : selectedConversation?.externalId ?? "Connect WhatsApp to load chats";
 
+  const isReadOnly = selectedConversation
+    ? (selectedConversation.metadata as any)?.readOnly === true
+    : false;
+
   return (
     <main className="h-screen overflow-hidden bg-[#eef1f0] text-[#15201c]">
       <div className="flex h-full min-h-0">
@@ -250,14 +266,13 @@ export default async function Home({ searchParams }: PageProps) {
               SM
             </div>
             <nav className="flex flex-col gap-3" aria-label="Main">
-              {["WA", "IG", "Q", "DB"].map((item, index) => (
+              {["WA", "IG"].map((item, index) => (
                 <button
                   key={item}
-                  className={`grid size-11 place-items-center rounded-lg text-sm font-semibold transition ${
-                    index === 0
-                      ? "bg-white text-[#183229]"
-                      : "bg-white/10 text-white/75 hover:bg-white/15"
-                  }`}
+                  className={`grid size-11 place-items-center rounded-lg text-sm font-semibold transition ${index === 0
+                    ? "bg-white text-[#183229]"
+                    : "bg-white/10 text-white/75 hover:bg-white/15"
+                    }`}
                   type="button"
                 >
                   {item}
@@ -329,9 +344,8 @@ export default async function Home({ searchParams }: PageProps) {
                   return (
                     <Link
                       key={chat.id}
-                      className={`grid w-full grid-cols-[48px_minmax(0,1fr)_auto] gap-3 px-4 py-4 text-left transition hover:bg-[#f4f7f6] ${
-                        isActive ? "bg-[#eef7f3]" : "bg-white"
-                      }`}
+                      className={`grid w-full grid-cols-[48px_minmax(0,1fr)_auto] gap-3 px-4 py-4 text-left transition hover:bg-[#f4f7f6] ${isActive ? "bg-[#eef7f3]" : "bg-white"
+                        }`}
                       href={`/?conversation=${encodeURIComponent(chat.id)}`}
                     >
                       <div className="grid size-12 place-items-center rounded-lg bg-[#d9eee5] text-sm font-bold text-[#183229]">
@@ -409,18 +423,16 @@ export default async function Home({ searchParams }: PageProps) {
                 {messages.map((message) => (
                   <div
                     key={message.id}
-                    className={`flex ${
-                      message.direction === "OUTBOUND"
-                        ? "justify-end"
-                        : "justify-start"
-                    }`}
+                    className={`flex ${message.direction === "OUTBOUND"
+                      ? "justify-end"
+                      : "justify-start"
+                      }`}
                   >
                     <div
-                      className={`max-w-[78%] rounded-lg px-3 py-2 shadow-sm md:max-w-[58%] ${
-                        message.direction === "OUTBOUND"
-                          ? "bg-[#d9fdd3]"
-                          : "bg-white"
-                      }`}
+                      className={`max-w-[78%] rounded-lg px-3 py-2 shadow-sm md:max-w-[58%] ${message.direction === "OUTBOUND"
+                        ? "bg-[#d9fdd3]"
+                        : "bg-white"
+                        }`}
                     >
                       <p className="whitespace-pre-wrap text-sm leading-6">
                         {message.body || `[${message.kind.toLowerCase()}]`}
@@ -433,26 +445,18 @@ export default async function Home({ searchParams }: PageProps) {
                 ))}
               </MessageScrollPane>
 
-              <div className="border-t border-black/10 bg-[#f7faf8] p-3 md:p-4">
-                <div className="flex items-end gap-3">
-                  <button
-                    className="grid size-11 shrink-0 place-items-center rounded-lg border border-black/10 bg-white text-xl"
-                    type="button"
-                    aria-label="Attach file"
-                  >
-                    +
-                  </button>
-                  <div className="min-h-11 flex-1 rounded-lg border border-black/10 bg-white px-4 py-3 text-sm text-[#65766f]">
-                    Type a message
+              {selectedConversation ? (
+                <ChatInput
+                  conversationId={selectedConversation.id}
+                  disabled={isReadOnly}
+                />
+              ) : (
+                <div className="border-t border-black/10 bg-[#f7faf8] p-3 md:p-4">
+                  <div className="min-h-11 flex-1 rounded-lg border border-black/10 bg-white px-4 py-3 text-sm text-[#65766f] flex items-center">
+                    Select a conversation to start messaging
                   </div>
-                  <button
-                    className="rounded-lg bg-[#24d366] px-5 py-3 text-sm font-bold text-[#10241d] transition hover:bg-[#20bd5c]"
-                    type="button"
-                  >
-                    Send
-                  </button>
                 </div>
-              </div>
+              )}
             </section>
 
             <aside className="min-h-0 overflow-y-auto border-l border-black/10 bg-[#fbfcfc]">
@@ -552,6 +556,7 @@ export default async function Home({ searchParams }: PageProps) {
                   </div>
                 </div>
               </section>
+              <AutoRefresher intervalMs={3000} />
             </aside>
           </div>
         </section>
