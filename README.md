@@ -1,4 +1,51 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+This is a social messaging dashboard built with Next.js. The WhatsApp MVP uses
+Baileys as a long-running worker process that connects through WhatsApp Web
+linked devices.
+
+## WhatsApp Worker
+
+Make sure `DATABASE_URL` is set in `.env`, then create/update the database
+tables:
+
+```bash
+npx prisma db push
+npx prisma generate
+```
+
+Start the WhatsApp worker in a separate terminal:
+
+```bash
+npm run whatsapp:worker
+```
+
+On first run it prints a QR code. Scan it from WhatsApp:
+
+```txt
+WhatsApp > Linked devices > Link a device
+```
+
+The local Baileys auth/session files are stored in:
+
+```txt
+.data/baileys-auth
+```
+
+That folder is ignored by Git and should not be committed. To relink the account,
+stop the worker and delete that folder.
+
+When connected, incoming WhatsApp messages are persisted into the dashboard
+database as contacts, conversations, and messages.
+
+The worker also captures small history sync chunks from Baileys. Defaults:
+
+```txt
+WHATSAPP_HISTORY_CHAT_LIMIT=250
+WHATSAPP_HISTORY_CONTACT_LIMIT=250
+WHATSAPP_HISTORY_MESSAGE_LIMIT=100
+```
+
+These limits are applied per history sync event to avoid importing a huge archive
+while the product is still in MVP mode.
 
 ## Getting Started
 

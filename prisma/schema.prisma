@@ -1,0 +1,247 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum ChannelType {
+  WHATSAPP
+  INSTAGRAM
+}
+
+enum ChannelProvider {
+  BAILEYS
+  EVOLUTION_API
+  META_CLOUD_API
+  INSTAGRAM_GRAPH_API
+}
+
+enum ChannelAccountStatus {
+  DISCONNECTED
+  CONNECTING
+  CONNECTED
+  SYNCING
+  ERROR
+}
+
+enum ConversationType {
+  DIRECT
+  GROUP
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageKind {
+  TEXT
+  IMAGE
+  VIDEO
+  AUDIO
+  DOCUMENT
+  STICKER
+  LOCATION
+  CONTACT
+  SYSTEM
+  UNKNOWN
+}
+
+enum MessageStatus {
+  PENDING
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum QueueJobStatus {
+  DRAFT
+  QUEUED
+  RUNNING
+  PAUSED
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum QueueRecipientStatus {
+  PENDING
+  SENDING
+  SENT
+  FAILED
+  SKIPPED
+}
+
+model ChannelAccount {
+  id                    String               @id @default(cuid())
+  type                  ChannelType
+  provider              ChannelProvider
+  displayName           String
+  externalAccountId     String?
+  phoneNumber           String?
+  status                ChannelAccountStatus @default(DISCONNECTED)
+  providerInstanceId    String?
+  providerBaseUrl       String?
+  providerSecretRef     String?
+  authStateLocation     String?
+  lastConnectedAt       DateTime?
+  lastSyncAt            DateTime?
+  metadata              Json?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  contacts      Contact[]
+  conversations Conversation[]
+  messages      Message[]
+  queueJobs     MessageQueueJob[]
+
+  @@unique([provider, externalAccountId])
+  @@unique([provider, providerInstanceId])
+  @@index([type, status])
+}
+
+model Contact {
+  id               String   @id @default(cuid())
+  channelAccountId String
+  externalId       String
+  phoneNumber      String?
+  username         String?
+  displayName      String
+  avatarUrl        String?
+  isGroup          Boolean  @default(false)
+  isBlocked        Boolean  @default(false)
+  labels           String[] @default([])
+  metadata         Json?
+  lastSeenAt       DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  channelAccount ChannelAccount @relation(fields: [channelAccountId], references: [id], onDelete: Cascade)
+  conversations  ConversationContact[]
+  messages       Message[]
+  queueRecipients MessageQueueRecipient[]
+
+  @@unique([channelAccountId, externalId])
+  @@index([channelAccountId, phoneNumber])
+  @@index([displayName])
+}
+
+model Conversation {
+  id               String           @id @default(cuid())
+  channelAccountId String
+  externalId       String
+  type             ConversationType @default(DIRECT)
+  title            String
+  avatarUrl        String?
+  unreadCount      Int              @default(0)
+  isArchived       Boolean          @default(false)
+  isPinned         Boolean          @default(false)
+  lastMessageAt    DateTime?
+  metadata         Json?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  channelAccount ChannelAccount @relation(fields: [channelAccountId], references: [id], onDelete: Cascade)
+  participants   ConversationContact[]
+  messages       Message[]
+
+  @@unique([channelAccountId, externalId])
+  @@index([channelAccountId, lastMessageAt])
+}
+
+model ConversationContact {
+  conversationId String
+  contactId      String
+  joinedAt       DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  contact      Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, contactId])
+}
+
+model Message {
+  id               String           @id @default(cuid())
+  channelAccountId String
+  conversationId   String
+  contactId        String?
+  externalId       String
+  direction        MessageDirection
+  kind             MessageKind      @default(TEXT)
+  status           MessageStatus    @default(PENDING)
+  body             String?
+  mediaUrl         String?
+  mediaMimeType    String?
+  quotedMessageId  String?
+  sentAt           DateTime?
+  deliveredAt      DateTime?
+  readAt           DateTime?
+  failedAt         DateTime?
+  failureReason    String?
+  rawPayload       Json?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  channelAccount ChannelAccount @relation(fields: [channelAccountId], references: [id], onDelete: Cascade)
+  conversation   Conversation   @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  contact        Contact?       @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  @@unique([channelAccountId, externalId])
+  @@index([conversationId, sentAt])
+  @@index([channelAccountId, status])
+}
+
+model MessageQueueJob {
+  id                String         @id @default(cuid())
+  channelAccountId  String
+  title             String
+  body              String
+  status            QueueJobStatus @default(DRAFT)
+  maxRecipients     Int            @default(5)
+  delaySeconds      Int            @default(45)
+  jitterSeconds     Int            @default(15)
+  scheduledFor      DateTime?
+  startedAt         DateTime?
+  completedAt       DateTime?
+  pausedAt          DateTime?
+  failureReason     String?
+  createdByUserId   String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  channelAccount ChannelAccount          @relation(fields: [channelAccountId], references: [id], onDelete: Cascade)
+  recipients     MessageQueueRecipient[]
+
+  @@index([channelAccountId, status])
+  @@index([scheduledFor])
+}
+
+model MessageQueueRecipient {
+  id               String               @id @default(cuid())
+  queueJobId       String
+  contactId        String
+  status           QueueRecipientStatus @default(PENDING)
+  position         Int
+  attempts         Int                  @default(0)
+  nextAttemptAt    DateTime?
+  sentAt           DateTime?
+  failureReason    String?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  queueJob MessageQueueJob @relation(fields: [queueJobId], references: [id], onDelete: Cascade)
+  contact  Contact         @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([queueJobId, contactId])
+  @@index([queueJobId, status, position])
+  @@index([nextAttemptAt])
+}
