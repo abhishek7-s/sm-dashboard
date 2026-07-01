@@ -99,10 +99,20 @@ model ChannelAccount {
   createdAt             DateTime             @default(now())
   updatedAt             DateTime             @updatedAt
 
-  contacts      Contact[]
-  conversations Conversation[]
-  messages      Message[]
-  queueJobs     MessageQueueJob[]
+  // Instagram-specific fields (null for non-IG accounts)
+  igAccessToken         String?
+  igTokenExpiresAt      DateTime?
+  igUserId              String?   // IG Business/Creator account ID
+  igUsername            String?
+  igProfilePicUrl       String?
+
+  contacts         Contact[]
+  conversations    Conversation[]
+  messages         Message[]
+  queueJobs        MessageQueueJob[]
+  igPosts          IgPost[]
+  igDms            IgDm[]
+  igMonitorTargets IgMonitorTarget[]
 
   @@unique([provider, externalAccountId])
   @@unique([provider, providerInstanceId])
@@ -244,4 +254,130 @@ model MessageQueueRecipient {
   @@unique([queueJobId, contactId])
   @@index([queueJobId, status, position])
   @@index([nextAttemptAt])
+}
+
+// ─── Instagram Models ─────────────────────────────────────────────────────────
+
+enum IgMediaType {
+  IMAGE
+  VIDEO
+  CAROUSEL_ALBUM
+  REEL
+  STORY
+}
+
+enum IgCommentReplyStatus {
+  NONE
+  PENDING
+  SENT
+  FAILED
+}
+
+model IgPost {
+  id               String      @id @default(cuid())
+  channelAccountId String
+  externalId       String      // IG media ID
+  mediaType        IgMediaType
+  caption          String?
+  permalink        String?
+  thumbnailUrl     String?
+  mediaUrl         String?
+  likeCount        Int         @default(0)
+  commentsCount    Int         @default(0)
+  reach            Int?
+  impressions      Int?
+  saved            Int?
+  isStory          Boolean     @default(false)
+  rawInsights      Json?
+  postedAt         DateTime?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  channelAccount ChannelAccount @relation(fields: [channelAccountId], references: [id], onDelete: Cascade)
+  comments       IgComment[]
+
+  @@unique([channelAccountId, externalId])
+  @@index([channelAccountId, postedAt])
+}
+
+model IgComment {
+  id               String               @id @default(cuid())
+  igPostId         String
+  externalId       String
+  text             String
+  username         String
+  userExternalId   String?
+  parentCommentId  String?              // null = top-level, set = reply
+  replyStatus      IgCommentReplyStatus @default(NONE)
+  replyText        String?
+  repliedAt        DateTime?
+  hidden           Boolean              @default(false)
+  timestamp        DateTime
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  igPost   IgPost     @relation(fields: [igPostId], references: [id], onDelete: Cascade)
+  replies  IgComment[] @relation("CommentReplies")
+  parent   IgComment?  @relation("CommentReplies", fields: [parentCommentId], references: [id])
+
+  @@unique([igPostId, externalId])
+  @@index([igPostId, timestamp])
+}
+
+model IgDm {
+  id                  String   @id @default(cuid())
+  channelAccountId    String
+  externalId          String   // IG conversation/thread ID
+  participantUsername String?
+  participantIgId     String?
+  messages            Json     @default("[]")
+  lastMessageAt       DateTime?
+  withinWindow        Boolean  @default(false)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  channelAccount ChannelAccount @relation(fields: [channelAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([channelAccountId, externalId])
+  @@index([channelAccountId, lastMessageAt])
+}
+
+model IgMonitorTarget {
+  id               String   @id @default(cuid())
+  channelAccountId String
+  username         String
+  igBusinessId     String?  // resolved via Business Discovery API
+  displayName      String?
+  profilePicUrl    String?
+  enabled          Boolean  @default(true)
+  lastCheckedAt    DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  channelAccount ChannelAccount  @relation(fields: [channelAccountId], references: [id], onDelete: Cascade)
+  posts          IgMonitorPost[]
+
+  @@unique([channelAccountId, username])
+  @@index([channelAccountId, enabled])
+}
+
+model IgMonitorPost {
+  id               String      @id @default(cuid())
+  targetId         String
+  externalId       String      // IG media ID
+  caption          String?
+  permalink        String?
+  mediaType        IgMediaType
+  thumbnailUrl     String?
+  mediaUrl         String?
+  likeCount        Int         @default(0)
+  commentsCount    Int         @default(0)
+  postedAt         DateTime?
+  seenAt           DateTime    @default(now())
+  createdAt        DateTime    @default(now())
+
+  target IgMonitorTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@unique([targetId, externalId])
+  @@index([targetId, postedAt])
 }

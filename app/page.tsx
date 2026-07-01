@@ -284,18 +284,20 @@ export default async function Home({ searchParams }: PageProps) {
               SM
             </div>
             <nav className="flex flex-col gap-3" aria-label="Main">
-              {["WA", "IG"].map((item, index) => (
-                <button
-                  key={item}
-                  className={`grid size-11 place-items-center rounded-lg text-sm font-semibold transition ${index === 0
-                    ? "bg-white text-[#183229]"
-                    : "bg-white/10 text-white/75 hover:bg-white/15"
-                    }`}
-                  type="button"
-                >
-                  {item}
-                </button>
-              ))}
+              <button
+                className="grid size-11 place-items-center rounded-lg text-sm font-semibold transition bg-white text-[#183229]"
+                type="button"
+                aria-current="page"
+              >
+                WA
+              </button>
+              <Link
+                href="/instagram"
+                className="grid size-11 place-items-center rounded-lg text-sm font-semibold transition bg-white/10 text-white/75 hover:bg-white/15"
+                aria-label="Instagram"
+              >
+                IG
+              </Link>
             </nav>
           </div>
           <div className="grid size-10 place-items-center rounded-lg bg-white/10 text-sm font-semibold">
