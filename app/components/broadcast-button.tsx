@@ -17,7 +17,7 @@ export function BroadcastButton({ contacts }: { contacts: Contact[] }) {
     <>
       <button
         onClick={() => setOpen(true)}
-        className="rounded-lg bg-[#183229] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-[#244a3d]"
+        className="rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 px-5 py-2 text-sm font-bold text-white shadow-md shadow-emerald-500/20 transition hover:opacity-90"
         type="button"
       >
         📢 Broadcast

@@ -26,6 +26,8 @@ const authStateLocation =
 type PersistMessageInput = {
   message: WAMessage;
   upsertType: string;
+  mediaUrl?: string;
+  mediaMimeType?: string;
 };
 
 type PersistHistoryInput = {
@@ -437,6 +439,8 @@ export async function getHistoryBackfillSeeds(
 export async function persistWhatsAppMessage({
   message,
   upsertType,
+  mediaUrl,
+  mediaMimeType,
 }: PersistMessageInput) {
   const remoteJid = message.key.remoteJid;
   const externalMessageId = message.key.id;
@@ -565,6 +569,8 @@ export async function persistWhatsAppMessage({
       kind: getContentKind(message),
       status: fromMe ? MessageStatus.SENT : MessageStatus.DELIVERED,
       body,
+      mediaUrl,
+      mediaMimeType,
       sentAt,
       rawPayload: toJson(message),
     },
@@ -575,6 +581,8 @@ export async function persistWhatsAppMessage({
       kind: getContentKind(message),
       status: fromMe ? MessageStatus.SENT : MessageStatus.DELIVERED,
       body,
+      mediaUrl,
+      mediaMimeType,
       sentAt,
       rawPayload: toJson(message),
     },

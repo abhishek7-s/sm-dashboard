@@ -2,12 +2,15 @@ import makeWASocket, {
   Browsers,
   DisconnectReason,
   getContentType,
+  downloadMediaMessage,
   useMultiFileAuthState as createMultiFileAuthState,
   type WAMessage,
 } from "baileys";
 import pino from "pino";
 import qrcode from "qrcode-terminal";
 import path from "node:path";
+import fs from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { prisma } from "../lib/db.ts";
 import {
   getHistoryBackfillSeeds,
@@ -290,7 +293,37 @@ async function processQueueJobs(sock: WhatsAppSocket) {
   const jid = conversation?.externalId ?? recipient.contact.externalId;
 
   try {
-    const sentMsg = await sock.sendMessage(jid, { text: job.body });
+    let msgOptions: any = { text: job.body };
+    if (job.mediaUrl) {
+      const filepath = path.join(process.cwd(), "public", job.mediaUrl);
+      const isDocument = job.mediaMimeType?.includes('pdf') || job.mediaMimeType?.includes('document') || job.mediaMimeType?.includes('msword') || job.mediaMimeType?.includes('spreadsheet') || job.mediaMimeType?.includes('csv');
+      
+      if (isDocument) {
+        msgOptions = {
+          document: { url: filepath },
+          mimetype: job.mediaMimeType,
+          fileName: "Attachment",
+          caption: job.body || undefined
+        };
+      } else if (job.mediaMimeType?.includes('video')) {
+        msgOptions = {
+          video: { url: filepath },
+          caption: job.body || undefined
+        };
+      } else if (job.mediaMimeType?.includes('audio')) {
+         msgOptions = {
+          audio: { url: filepath },
+          ptt: true
+        };
+      } else {
+        msgOptions = {
+          image: { url: filepath },
+          caption: job.body || undefined
+        };
+      }
+    }
+
+    const sentMsg = await sock.sendMessage(jid, msgOptions);
     const now = new Date();
     await prisma.messageQueueRecipient.update({
       where: { id: recipient.id },
@@ -436,6 +469,49 @@ async function startWhatsAppWorker() {
       const { remoteJid, participant, direction } = getMessageContact(message);
       const body = getMessageBody(message);
 
+      let mediaUrl: string | undefined;
+      let mediaMimeType: string | undefined;
+
+      try {
+        const messageType = getContentType(message.message);
+        const isMedia = messageType === "imageMessage" || messageType === "videoMessage" || messageType === "audioMessage" || messageType === "documentMessage" || messageType === "stickerMessage";
+
+        if (isMedia && message.message) {
+          const buffer = await downloadMediaMessage(
+            message,
+            "buffer",
+            {},
+            { 
+              logger,
+              reuploadRequest: sock.updateMediaMessage
+            }
+          );
+          
+          const mediaMessage = message.message[messageType as keyof typeof message.message] as any;
+          mediaMimeType = mediaMessage?.mimetype;
+          
+          let ext = "";
+          if (mediaMimeType) {
+            ext = "." + mediaMimeType.split("/")[1].split(";")[0];
+          } else if (messageType === 'stickerMessage') {
+            ext = '.webp';
+          } else if (messageType === 'imageMessage') {
+            ext = '.jpeg';
+          }
+
+          const filename = `${randomUUID()}${ext}`;
+          const uploadDir = path.join(process.cwd(), "public", "uploads", "whatsapp");
+          await fs.mkdir(uploadDir, { recursive: true });
+          
+          const filepath = path.join(uploadDir, filename);
+          await fs.writeFile(filepath, buffer);
+          
+          mediaUrl = `/uploads/whatsapp/${filename}`;
+        }
+      } catch (err) {
+        logger.error({ err, messageId: message.key.id }, "Failed to download media");
+      }
+
       logger.info(
         {
           type,
@@ -445,12 +521,13 @@ async function startWhatsAppWorker() {
           messageId: message.key.id,
           timestamp: message.messageTimestamp,
           body,
+          mediaUrl,
         },
         "WhatsApp message received",
       );
 
       try {
-        await persistWhatsAppMessage({ message, upsertType: type });
+        await persistWhatsAppMessage({ message, upsertType: type, mediaUrl, mediaMimeType });
       } catch (error) {
         logger.error(
           {
