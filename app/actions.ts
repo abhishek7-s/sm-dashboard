@@ -5,8 +5,8 @@ import { whatsappSendPolicy } from "@/lib/queue/message-policy";
 import { revalidatePath } from "next/cache";
 import { v4 as uuidv4 } from "uuid";
 
-export async function sendChatMessage(conversationId: string, body: string) {
-  if (!body.trim()) {
+export async function sendChatMessage(conversationId: string, body: string, mediaUrl?: string, mediaMimeType?: string) {
+  if (!body.trim() && !mediaUrl) {
     return { error: "Message cannot be empty" };
   }
 
@@ -28,9 +28,11 @@ export async function sendChatMessage(conversationId: string, body: string) {
       contactId: contactId,
       externalId: `pending-${uuidv4()}`,
       direction: "OUTBOUND",
-      kind: "TEXT",
+      kind: mediaUrl ? (mediaMimeType?.includes('image') ? "IMAGE" : mediaMimeType?.includes('video') ? "VIDEO" : "DOCUMENT") : "TEXT",
       status: "PENDING",
       body: body.trim(),
+      mediaUrl,
+      mediaMimeType,
     },
   });
 
@@ -41,9 +43,9 @@ export async function sendChatMessage(conversationId: string, body: string) {
 export async function createBroadcastJob(
   body: string,
   contactIds: string[],
-  options?: { delaySeconds?: number; jitterSeconds?: number; scheduledFor?: string },
+  options?: { delaySeconds?: number; jitterSeconds?: number; scheduledFor?: string; mediaUrl?: string; mediaMimeType?: string },
 ) {
-  if (!body.trim()) {
+  if (!body.trim() && !options?.mediaUrl) {
     return { error: "Message body cannot be empty" };
   }
   if (contactIds.length === 0) {
@@ -68,6 +70,8 @@ export async function createBroadcastJob(
       channelAccountId: account.id,
       title: `Broadcast to ${contactIds.length} contact${contactIds.length !== 1 ? "s" : ""}`,
       body: body.trim(),
+      mediaUrl: options?.mediaUrl,
+      mediaMimeType: options?.mediaMimeType,
       status: "QUEUED",
       maxRecipients: contactIds.length,
       delaySeconds,

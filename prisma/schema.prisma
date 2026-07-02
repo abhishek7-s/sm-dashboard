@@ -215,6 +215,8 @@ model MessageQueueJob {
   channelAccountId  String
   title             String
   body              String
+  mediaUrl          String?
+  mediaMimeType     String?
   status            QueueJobStatus @default(DRAFT)
   maxRecipients     Int            @default(5)
   delaySeconds      Int            @default(45)
