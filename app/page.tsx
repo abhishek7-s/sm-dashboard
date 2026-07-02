@@ -553,30 +553,6 @@ export default async function Home({ searchParams }: PageProps) {
               </section>
 
               <section className="p-4">
-                <p className="text-sm font-semibold text-[#10241d]">
-                  Guardrails
-                </p>
-                <div className="mt-4 space-y-3 text-sm text-[#52665f]">
-                  <div className="flex justify-between gap-4">
-                    <span>Recipients per selection</span>
-                    <strong className="text-[#10241d]">
-                      {whatsappSendPolicy.maxRecipientsPerSelection}
-                    </strong>
-                  </div>
-                  <div className="flex justify-between gap-4">
-                    <span>Retry attempts</span>
-                    <strong className="text-[#10241d]">
-                      {whatsappSendPolicy.maxAttemptsPerRecipient}
-                    </strong>
-                  </div>
-                  <div className="flex justify-between gap-4">
-                    <span>Quiet hours</span>
-                    <strong className="text-[#10241d]">
-                      {whatsappSendPolicy.quietHours.startHour}:00-
-                      {whatsappSendPolicy.quietHours.endHour}:00
-                    </strong>
-                  </div>
-                </div>
               </section>
               <AutoRefresher intervalMs={3000} />
             </aside>
