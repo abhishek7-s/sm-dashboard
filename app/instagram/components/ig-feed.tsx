@@ -1,6 +1,8 @@
 "use client";
 
 import { syncInstagramPosts } from "../actions";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 type Post = {
@@ -26,12 +28,26 @@ type Props = {
 };
 
 const mediaTypeIcon: Record<string, string> = {
-  IMAGE: "🖼️",
-  VIDEO: "🎬",
-  CAROUSEL_ALBUM: "🎠",
-  REEL: "🎞️",
-  STORY: "⭕",
+  IMAGE: "Photo",
+  VIDEO: "Video",
+  CAROUSEL_ALBUM: "Album",
+  REEL: "Reel",
+  STORY: "Story",
 };
+
+const FILTERS = [
+  { id: "all", label: "All" },
+  { id: "IMAGE", label: "Photos" },
+  { id: "VIDEO", label: "Videos" },
+  { id: "CAROUSEL_ALBUM", label: "Albums" },
+  { id: "REEL", label: "Reels" },
+] as const;
+
+const SORTS = [
+  { id: "recent", label: "Newest" },
+  { id: "engagement", label: "Most engaged" },
+  { id: "comments", label: "Most comments" },
+] as const;
 
 function formatRelative(date: Date | null) {
   if (!date) return "";
@@ -45,8 +61,11 @@ function formatRelative(date: Date | null) {
 }
 
 export function IgFeed({ posts, onSelectPost, selectedPostId }: Props) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
+  const [filter, setFilter] = useState<(typeof FILTERS)[number]["id"]>("all");
+  const [sort, setSort] = useState<(typeof SORTS)[number]["id"]>("recent");
 
   function handleSync() {
     startTransition(async () => {
@@ -56,6 +75,7 @@ export function IgFeed({ posts, onSelectPost, selectedPostId }: Props) {
         setMsg(`Error: ${result.error}`);
       } else {
         setMsg(`Synced ${result.count} posts`);
+        router.refresh();
         setTimeout(() => setMsg(null), 3000);
       }
     });
@@ -63,13 +83,30 @@ export function IgFeed({ posts, onSelectPost, selectedPostId }: Props) {
 
   const feed = posts.filter((p) => !p.isStory);
   const stories = posts.filter((p) => p.isStory);
+  const filteredFeed = feed
+    .filter((p) => filter === "all" || p.mediaType === filter)
+    .slice()
+    .sort((a, b) => {
+      if (sort === "engagement") {
+        return b.likeCount + b.commentsCount - (a.likeCount + a.commentsCount);
+      }
+      if (sort === "comments") return b.commentsCount - a.commentsCount;
+      return new Date(b.postedAt ?? 0).getTime() - new Date(a.postedAt ?? 0).getTime();
+    });
+  const totalEngagement = feed.reduce((sum, post) => sum + post.likeCount + post.commentsCount, 0);
+  const bestPost = feed.reduce<Post | null>((best, post) => {
+    if (!best) return post;
+    return post.likeCount + post.commentsCount > best.likeCount + best.commentsCount ? post : best;
+  }, null);
 
   return (
     <div className="ig-feed-root">
       <div className="ig-feed-header">
         <div>
           <h2 className="ig-section-title">Your Feed</h2>
-          <p className="ig-section-sub">{feed.length} posts · {stories.length} stories</p>
+          <p className="ig-section-sub">
+            {feed.length} posts · {stories.length} stories · {totalEngagement.toLocaleString()} engagements
+          </p>
         </div>
         <button
           onClick={handleSync}
@@ -82,13 +119,58 @@ export function IgFeed({ posts, onSelectPost, selectedPostId }: Props) {
 
       {msg && <p className="ig-feed-msg">{msg}</p>}
 
+      {feed.length > 0 && (
+        <div className="ig-feed-toolbar">
+          <div className="ig-segmented" aria-label="Filter posts">
+            {FILTERS.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setFilter(item.id)}
+                className={`ig-segment ${filter === item.id ? "ig-segment-active" : ""}`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <label className="ig-select-label">
+            Sort
+            <select
+              value={sort}
+              onChange={(event) => setSort(event.target.value as typeof sort)}
+              className="ig-select"
+            >
+              {SORTS.map((item) => (
+                <option key={item.id} value={item.id}>{item.label}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+      )}
+
+      {bestPost && (
+        <div className="ig-feed-callout">
+          <span className="ig-callout-kicker">Best performer</span>
+          <span className="ig-callout-text">
+            {bestPost.caption ? bestPost.caption.slice(0, 90) : "Untitled post"} · {(bestPost.likeCount + bestPost.commentsCount).toLocaleString()} engagements
+          </span>
+          <Link href={`/instagram?tab=comments&post=${bestPost.id}`} className="ig-inline-link">
+            Review comments
+          </Link>
+        </div>
+      )}
+
       {/* Stories row */}
       {stories.length > 0 && (
         <div className="ig-stories-row">
           {stories.map((story) => (
             <button
               key={story.id}
-              onClick={() => onSelectPost?.(story)}
+              type="button"
+              onClick={() => {
+                onSelectPost?.(story);
+                router.push(`/instagram?tab=comments&post=${story.id}`, { scroll: false });
+              }}
               className={`ig-story-bubble ${selectedPostId === story.id ? "ig-story-active" : ""}`}
             >
               <div className="ig-story-ring">
@@ -99,9 +181,9 @@ export function IgFeed({ posts, onSelectPost, selectedPostId }: Props) {
                     className="ig-story-img"
                   />
                 ) : (
-                  <div className="ig-story-placeholder">⭕</div>
-                )}
-              </div>
+                    <div className="ig-story-placeholder">Story</div>
+                  )}
+                </div>
               <span className="ig-story-label">Story</span>
             </button>
           ))}
@@ -118,13 +200,14 @@ export function IgFeed({ posts, onSelectPost, selectedPostId }: Props) {
         </div>
       ) : (
         <div className="ig-grid">
-          {feed.map((post) => {
+          {filteredFeed.map((post) => {
             const thumb = post.thumbnailUrl ?? post.mediaUrl;
             const isSelected = post.id === selectedPostId;
 
             return (
-              <button
+              <Link
                 key={post.id}
+                href={`/instagram?tab=comments&post=${post.id}`}
                 onClick={() => onSelectPost?.(post)}
                 className={`ig-grid-item ${isSelected ? "ig-grid-item-active" : ""}`}
               >
@@ -134,7 +217,7 @@ export function IgFeed({ posts, onSelectPost, selectedPostId }: Props) {
                     <img src={thumb} alt={post.caption ?? ""} className="ig-grid-img" />
                   ) : (
                     <div className="ig-grid-placeholder">
-                      <span>{mediaTypeIcon[post.mediaType] ?? "🖼️"}</span>
+                      <span>{mediaTypeIcon[post.mediaType] ?? "Post"}</span>
                     </div>
                   )}
                   <div className="ig-grid-overlay">
@@ -146,10 +229,10 @@ export function IgFeed({ posts, onSelectPost, selectedPostId }: Props) {
 
                 {/* Stats */}
                 <div className="ig-grid-stats">
-                  <span>❤️ {post.likeCount.toLocaleString()}</span>
-                  <span>💬 {post.commentsCount.toLocaleString()}</span>
+                  <span>{post.likeCount.toLocaleString()} likes</span>
+                  <span>{post.commentsCount.toLocaleString()} comments</span>
                   {post.reach != null && (
-                    <span>👁️ {post.reach.toLocaleString()}</span>
+                    <span>{post.reach.toLocaleString()} reach</span>
                   )}
                 </div>
 
@@ -160,7 +243,7 @@ export function IgFeed({ posts, onSelectPost, selectedPostId }: Props) {
                   </p>
                   <p className="ig-grid-time">{formatRelative(post.postedAt)}</p>
                 </div>
-              </button>
+              </Link>
             );
           })}
         </div>

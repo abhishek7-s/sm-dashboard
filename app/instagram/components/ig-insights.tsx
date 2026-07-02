@@ -1,6 +1,7 @@
 "use client";
 
 import { syncAllInsights, syncPostInsights } from "../actions";
+import { useRouter } from "next/navigation";
 import { useTransition, useState } from "react";
 
 type Post = {
@@ -52,17 +53,26 @@ function formatDate(date: Date | null) {
 }
 
 const mediaTypeIcon: Record<string, string> = {
-  IMAGE: "🖼️",
-  VIDEO: "🎬",
-  CAROUSEL_ALBUM: "🎠",
-  REEL: "🎞️",
-  STORY: "⭕",
+  IMAGE: "Photo",
+  VIDEO: "Video",
+  CAROUSEL_ALBUM: "Album",
+  REEL: "Reel",
+  STORY: "Story",
 };
 
+const INSIGHT_SORTS = [
+  { id: "reach", label: "Reach" },
+  { id: "engagement", label: "Engagement" },
+  { id: "comments", label: "Comments" },
+  { id: "recent", label: "Newest" },
+] as const;
+
 export function IgInsights({ posts }: Props) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [sort, setSort] = useState<(typeof INSIGHT_SORTS)[number]["id"]>("reach");
 
   // Aggregate totals across all posts
   const totalLikes = posts.reduce((s, p) => s + p.likeCount, 0);
@@ -76,6 +86,20 @@ export function IgInsights({ posts }: Props) {
   const totalSaved = posts
     .filter((p) => p.saved != null)
     .reduce((s, p) => s + (p.saved ?? 0), 0);
+  const engagement = totalLikes + totalComments + totalSaved;
+  const avgReach = posts.length > 0 ? Math.round(totalReach / posts.length) : null;
+  const insightCoverage = posts.length
+    ? Math.round((posts.filter((p) => p.reach != null || p.impressions != null).length / posts.length) * 100)
+    : 0;
+  const sortedPosts = posts.slice().sort((a, b) => {
+    if (sort === "engagement") {
+      return b.likeCount + b.commentsCount + (b.saved ?? 0) - (a.likeCount + a.commentsCount + (a.saved ?? 0));
+    }
+    if (sort === "comments") return b.commentsCount - a.commentsCount;
+    if (sort === "recent") return new Date(b.postedAt ?? 0).getTime() - new Date(a.postedAt ?? 0).getTime();
+    return (b.reach ?? 0) - (a.reach ?? 0);
+  });
+  const topPost = sortedPosts[0] ?? null;
 
   function handleSyncAll() {
     startTransition(async () => {
@@ -85,6 +109,7 @@ export function IgInsights({ posts }: Props) {
         setMsg(`Error: ${result.error}`);
       } else {
         setMsg(`Insights synced (${result.total} posts)`);
+        router.refresh();
         setTimeout(() => setMsg(null), 3000);
       }
     });
@@ -98,6 +123,7 @@ export function IgInsights({ posts }: Props) {
       if ("error" in result) {
         setMsg(`Error: ${result.error}`);
       } else {
+        router.refresh();
         setTimeout(() => setMsg(null), 3000);
       }
     });
@@ -121,15 +147,48 @@ export function IgInsights({ posts }: Props) {
 
       {msg && <p className="ig-insights-msg">{msg}</p>}
 
+      <div className="ig-insights-toolbar">
+        <div>
+          <span className="ig-callout-kicker">Insight coverage</span>
+          <p className="ig-insights-coverage">
+            {insightCoverage}% of synced posts have reach or impression data · {totalImpressions.toLocaleString()} impressions
+          </p>
+        </div>
+        <label className="ig-select-label">
+          Rank by
+          <select
+            value={sort}
+            onChange={(event) => setSort(event.target.value as typeof sort)}
+            className="ig-select"
+          >
+            {INSIGHT_SORTS.map((item) => (
+              <option key={item.id} value={item.id}>{item.label}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+
       {/* Summary cards */}
       <div className="ig-stat-grid">
-        <StatCard label="Total Likes" value={totalLikes} icon="❤️" color="pink" />
-        <StatCard label="Comments" value={totalComments} icon="💬" color="purple" />
-        <StatCard label="Total Reach" value={totalReach || null} icon="📡" color="blue" />
-        <StatCard label="Impressions" value={totalImpressions || null} icon="👁️" color="teal" />
-        <StatCard label="Saved" value={totalSaved || null} icon="🔖" color="amber" />
-        <StatCard label="Posts" value={posts.length} icon="🗂️" color="gray" />
+        <StatCard label="Engagement" value={engagement} icon="Eng" color="pink" />
+        <StatCard label="Total Reach" value={totalReach || null} icon="Reach" color="blue" />
+        <StatCard label="Avg Reach" value={avgReach} icon="Avg" color="teal" />
+        <StatCard label="Comments" value={totalComments} icon="Com" color="purple" />
+        <StatCard label="Saved" value={totalSaved || null} icon="Save" color="amber" />
+        <StatCard label="Posts" value={posts.length} icon="Post" color="gray" />
       </div>
+
+      {topPost && (
+        <div className="ig-insights-highlight">
+          <span className="ig-callout-kicker">Top ranked post</span>
+          <p>{topPost.caption ? topPost.caption.slice(0, 140) : "No caption"}</p>
+          <div className="ig-insights-highlight-metrics">
+            <span>{topPost.reach?.toLocaleString() ?? "No"} reach</span>
+            <span>{(topPost.likeCount + topPost.commentsCount + (topPost.saved ?? 0)).toLocaleString()} engagement</span>
+            <span>{formatDate(topPost.postedAt)}</span>
+          </div>
+        </div>
+      )}
 
       {/* Per-post breakdown */}
       <div className="ig-insights-table-wrap">
@@ -147,7 +206,7 @@ export function IgInsights({ posts }: Props) {
             </tr>
           </thead>
           <tbody>
-            {posts.map((post) => {
+            {sortedPosts.map((post) => {
               const thumb = post.thumbnailUrl ?? post.mediaUrl;
               return (
                 <tr key={post.id} className="ig-insights-row">
@@ -157,7 +216,7 @@ export function IgInsights({ posts }: Props) {
                         <img src={thumb} alt="" className="ig-insights-thumb" />
                       ) : (
                         <div className="ig-insights-thumb-placeholder">
-                          {mediaTypeIcon[post.mediaType] ?? "🖼️"}
+                          {mediaTypeIcon[post.mediaType] ?? "Post"}
                         </div>
                       )}
                       <span className="ig-insights-caption">

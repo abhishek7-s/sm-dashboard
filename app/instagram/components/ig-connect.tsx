@@ -1,6 +1,7 @@
 "use client";
 
 import { disconnectInstagram, syncInstagramPosts } from "../actions";
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 type Props = {
@@ -16,14 +17,16 @@ type Props = {
 };
 
 export function IgConnect({ account, oauthUrl }: Props) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
+  const [now] = useState(() => Date.now());
 
   const isConnected = account?.status === "CONNECTED";
 
   function daysUntilExpiry(expiresAt: Date | null) {
     if (!expiresAt) return null;
-    const diff = new Date(expiresAt).getTime() - Date.now();
+    const diff = new Date(expiresAt).getTime() - now;
     return Math.floor(diff / (1000 * 60 * 60 * 24));
   }
 
@@ -37,6 +40,7 @@ export function IgConnect({ account, oauthUrl }: Props) {
         setSyncMsg(`Error: ${result.error}`);
       } else {
         setSyncMsg(`Synced ${result.count} posts`);
+        router.refresh();
         setTimeout(() => setSyncMsg(null), 3000);
       }
     });
@@ -45,6 +49,7 @@ export function IgConnect({ account, oauthUrl }: Props) {
   function handleDisconnect() {
     startTransition(async () => {
       await disconnectInstagram();
+      router.refresh();
     });
   }
 
@@ -80,6 +85,11 @@ export function IgConnect({ account, oauthUrl }: Props) {
             </div>
             <span className="ig-status-badge ig-status-connected">CONNECTED</span>
           </div>
+          {days !== null && days < 14 && (
+            <div className="ig-connect-alert">
+              Reconnect soon to keep publishing, comments, and DMs working without interruption.
+            </div>
+          )}
           <div className="ig-connect-actions">
             <button
               onClick={handleSync}

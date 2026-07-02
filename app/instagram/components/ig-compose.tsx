@@ -1,6 +1,7 @@
 "use client";
 
 import { publishInstagramPost, type PublishMediaType } from "../actions";
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 const MEDIA_TYPES: { value: PublishMediaType; label: string; icon: string; desc: string }[] = [
@@ -11,6 +12,7 @@ const MEDIA_TYPES: { value: PublishMediaType; label: string; icon: string; desc:
 ];
 
 export function IgCompose() {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [mediaType, setMediaType] = useState<PublishMediaType>("IMAGE");
   const [mediaUrl, setMediaUrl] = useState("");
@@ -19,10 +21,23 @@ export function IgCompose() {
 
   const isVideo = mediaType === "REEL" || mediaType === "STORY_VIDEO";
   const charLimit = 2200;
+  const captionRequired = mediaType === "IMAGE" || mediaType === "REEL";
+  const hashtags = caption.match(/#[A-Za-z0-9_]+/g) ?? [];
+  const mentions = caption.match(/@[A-Za-z0-9_.]+/g) ?? [];
+  const isHttpsUrl = /^https:\/\/\S+\.\S+/i.test(mediaUrl.trim());
+  const canPublish = isHttpsUrl && (!captionRequired || caption.trim().length > 0);
 
   function handlePublish() {
     if (!mediaUrl.trim()) {
       setResult({ type: "err", text: "Media URL is required." });
+      return;
+    }
+    if (!isHttpsUrl) {
+      setResult({ type: "err", text: "Use a public HTTPS media URL before publishing." });
+      return;
+    }
+    if (captionRequired && !caption.trim()) {
+      setResult({ type: "err", text: "Add a caption for feed posts and reels." });
       return;
     }
 
@@ -41,6 +56,7 @@ export function IgCompose() {
         setResult({ type: "ok", text: `Published! Media ID: ${res.mediaId}` });
         setMediaUrl("");
         setCaption("");
+        router.refresh();
       }
     });
   }
@@ -87,6 +103,9 @@ export function IgCompose() {
             placeholder={`https://example.com/your-${isVideo ? "video.mp4" : "photo.jpg"}`}
             className="ig-compose-input"
           />
+          {mediaUrl.trim() && !isHttpsUrl && (
+            <p className="ig-field-warning">Instagram requires a public HTTPS URL.</p>
+          )}
         </div>
 
         {/* Caption */}
@@ -104,22 +123,44 @@ export function IgCompose() {
               rows={5}
               className="ig-compose-textarea"
             />
+            <div className="ig-compose-caption-tools">
+              <button
+                type="button"
+                onClick={() => setCaption((current) => `${current.trim()}\n\nWhat do you think?`.trim())}
+                className="ig-chip-btn"
+              >
+                Add CTA
+              </button>
+              <button
+                type="button"
+                onClick={() => setCaption((current) => `${current.trim()} #new #instagram #updates`.trim())}
+                className="ig-chip-btn"
+              >
+                Add starter tags
+              </button>
+              <span>{hashtags.length} hashtags</span>
+              <span>{mentions.length} mentions</span>
+            </div>
           </div>
         )}
 
         {/* Preview */}
-        {mediaUrl && !isVideo && (
+        {mediaUrl && (
           <div className="ig-compose-group">
             <label className="ig-compose-label">Preview</label>
             <div className="ig-compose-preview">
-              <img
-                src={mediaUrl}
-                alt="Preview"
-                className="ig-compose-preview-img"
-                onError={(e) => {
-                  (e.currentTarget as HTMLImageElement).style.display = "none";
-                }}
-              />
+              {isVideo ? (
+                <video src={mediaUrl} className="ig-compose-preview-img" controls muted />
+              ) : (
+                <img
+                  src={mediaUrl}
+                  alt="Preview"
+                  className="ig-compose-preview-img"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).style.display = "none";
+                  }}
+                />
+              )}
             </div>
           </div>
         )}
@@ -133,7 +174,6 @@ export function IgCompose() {
 
         {/* Info note */}
         <div className="ig-compose-note">
-          <span>ℹ️</span>
           <span>
             The Instagram Graph API requires media to be hosted at a public HTTPS URL
             before publishing. For video/reels, processing may take a few minutes after
@@ -144,7 +184,7 @@ export function IgCompose() {
         {/* Submit */}
         <button
           onClick={handlePublish}
-          disabled={isPending || !mediaUrl.trim()}
+          disabled={isPending || !canPublish}
           className="ig-btn ig-btn-primary ig-btn-publish"
         >
           {isPending ? "Publishing…" : `Publish ${MEDIA_TYPES.find((t) => t.value === mediaType)?.label}`}

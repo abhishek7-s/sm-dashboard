@@ -1,6 +1,7 @@
 "use client";
 
 import { addMonitorTarget, removeMonitorTarget, toggleMonitorTarget, syncMonitorTargets } from "../actions";
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 type MonitorPost = {
@@ -32,11 +33,11 @@ type Props = {
 };
 
 const mediaTypeIcon: Record<string, string> = {
-  IMAGE: "🖼️",
-  VIDEO: "🎬",
-  CAROUSEL_ALBUM: "🎠",
-  REEL: "🎞️",
-  STORY: "⭕",
+  IMAGE: "Photo",
+  VIDEO: "Video",
+  CAROUSEL_ALBUM: "Album",
+  REEL: "Reel",
+  STORY: "Story",
 };
 
 function formatRelative(date: Date | null) {
@@ -50,10 +51,12 @@ function formatRelative(date: Date | null) {
 }
 
 export function IgMonitor({ targets }: Props) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [username, setUsername] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  const [query, setQuery] = useState("");
 
   function handleAdd() {
     const clean = username.trim().replace(/^@/, "");
@@ -67,6 +70,7 @@ export function IgMonitor({ targets }: Props) {
       } else {
         setMsg({ type: "ok", text: `@${clean} added to monitoring` });
         setUsername("");
+        router.refresh();
         setTimeout(() => setMsg(null), 4000);
       }
     });
@@ -75,12 +79,14 @@ export function IgMonitor({ targets }: Props) {
   function handleRemove(targetId: string) {
     startTransition(async () => {
       await removeMonitorTarget(targetId);
+      router.refresh();
     });
   }
 
   function handleToggle(targetId: string, enabled: boolean) {
     startTransition(async () => {
       await toggleMonitorTarget(targetId, enabled);
+      router.refresh();
     });
   }
 
@@ -92,10 +98,22 @@ export function IgMonitor({ targets }: Props) {
         setMsg({ type: "err", text: result.error! });
       } else {
         setMsg({ type: "ok", text: `Sync complete · ${result.newPosts} new posts found` });
+        router.refresh();
         setTimeout(() => setMsg(null), 4000);
       }
     });
   }
+
+  const filteredTargets = targets.filter((target) => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return true;
+    return (
+      target.username.toLowerCase().includes(needle) ||
+      target.displayName?.toLowerCase().includes(needle)
+    );
+  });
+  const activeTargets = targets.filter((target) => target.enabled).length;
+  const trackedPosts = targets.reduce((sum, target) => sum + target.posts.length, 0);
 
   return (
     <div className="ig-monitor-root">
@@ -103,7 +121,7 @@ export function IgMonitor({ targets }: Props) {
         <div>
           <h2 className="ig-section-title">Account Monitor</h2>
           <p className="ig-section-sub">
-            Track public Instagram Business/Creator accounts
+            {activeTargets} active accounts · {trackedPosts} tracked posts
           </p>
         </div>
         {targets.length > 0 && (
@@ -144,6 +162,16 @@ export function IgMonitor({ targets }: Props) {
         </p>
       </div>
 
+      {targets.length > 0 && (
+        <input
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search monitored accounts"
+          className="ig-search-input"
+        />
+      )}
+
       {msg && (
         <div className={`ig-monitor-msg ${msg.type === "err" ? "ig-monitor-msg-err" : "ig-monitor-msg-ok"}`}>
           {msg.text}
@@ -155,9 +183,13 @@ export function IgMonitor({ targets }: Props) {
         <div className="ig-monitor-empty">
           <p>No accounts monitored yet. Add a username above to start.</p>
         </div>
+      ) : filteredTargets.length === 0 ? (
+        <div className="ig-monitor-empty">
+          <p>No monitored accounts match your search.</p>
+        </div>
       ) : (
         <div className="ig-monitor-list">
-          {targets.map((target) => (
+          {filteredTargets.map((target) => (
             <div key={target.id} className={`ig-monitor-card ${!target.enabled ? "ig-monitor-card-disabled" : ""}`}>
               {/* Card header */}
               <div className="ig-monitor-card-header">
@@ -192,7 +224,7 @@ export function IgMonitor({ targets }: Props) {
                     onClick={() => setExpanded(expanded === target.id ? null : target.id)}
                     className="ig-btn ig-btn-ghost ig-btn-sm"
                   >
-                    {expanded === target.id ? "▲ Hide" : `▼ Posts (${target.posts.length})`}
+                    {expanded === target.id ? "Hide" : `Posts (${target.posts.length})`}
                   </button>
                   <button
                     onClick={() => handleRemove(target.id)}
@@ -225,12 +257,12 @@ export function IgMonitor({ targets }: Props) {
                               <img src={thumb} alt={post.caption ?? ""} className="ig-monitor-post-img" />
                             ) : (
                               <div className="ig-monitor-post-placeholder">
-                                {mediaTypeIcon[post.mediaType] ?? "🖼️"}
+                                {mediaTypeIcon[post.mediaType] ?? "Post"}
                               </div>
                             )}
                             <div className="ig-monitor-post-overlay">
-                              <span>❤️ {post.likeCount.toLocaleString()}</span>
-                              <span>💬 {post.commentsCount.toLocaleString()}</span>
+                              <span>{post.likeCount.toLocaleString()} likes</span>
+                              <span>{post.commentsCount.toLocaleString()} comments</span>
                             </div>
                           </a>
                         );

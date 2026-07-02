@@ -1,6 +1,8 @@
 "use client";
 
 import { syncPostComments, replyToIgComment } from "../actions";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState, useTransition, useRef, useEffect } from "react";
 
 type Comment = {
@@ -33,7 +35,21 @@ type Post = {
 type Props = {
   post: Post | null;
   comments: Comment[];
+  posts: Post[];
 };
+
+const COMMENT_FILTERS = [
+  { id: "needsReply", label: "Needs reply" },
+  { id: "all", label: "All" },
+  { id: "replied", label: "Replied" },
+  { id: "hidden", label: "Hidden" },
+] as const;
+
+const QUICK_REPLIES = [
+  "Thanks for reaching out. Sending you the details now.",
+  "Appreciate the love. Let us know if you have any questions.",
+  "Could you DM us your order details so we can check this?",
+];
 
 function timeAgo(date: Date) {
   const diff = Date.now() - new Date(date).getTime();
@@ -93,11 +109,13 @@ function CommentRow({
   );
 }
 
-export function IgComments({ post, comments }: Props) {
+export function IgComments({ post, comments, posts }: Props) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [replyTarget, setReplyTarget] = useState<{ id: string; username: string } | null>(null);
   const [replyText, setReplyText] = useState("");
   const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  const [filter, setFilter] = useState<(typeof COMMENT_FILTERS)[number]["id"]>("needsReply");
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -124,6 +142,7 @@ export function IgComments({ post, comments }: Props) {
         setMsg({ type: "err", text: result.error! });
       } else {
         setMsg({ type: "ok", text: `${result.count} comments loaded` });
+        router.refresh();
         setTimeout(() => setMsg(null), 3000);
       }
     });
@@ -139,6 +158,7 @@ export function IgComments({ post, comments }: Props) {
         setMsg({ type: "ok", text: "Reply sent!" });
         setReplyTarget(null);
         setReplyText("");
+        router.refresh();
         setTimeout(() => setMsg(null), 3000);
       }
     });
@@ -157,6 +177,14 @@ export function IgComments({ post, comments }: Props) {
     ...c,
     replies: repliesMap.get(c.id) ?? [],
   }));
+  const visibleComments = withReplies.filter((comment) => {
+    if (filter === "all") return true;
+    if (filter === "replied") return comment.replyStatus === "SENT";
+    if (filter === "hidden") return comment.hidden;
+    return comment.replyStatus !== "SENT" && !comment.hidden;
+  });
+  const needsReplyCount = withReplies.filter((comment) => comment.replyStatus !== "SENT" && !comment.hidden).length;
+  const repliedCount = withReplies.filter((comment) => comment.replyStatus === "SENT").length;
 
   return (
     <div className="ig-comments-root">
@@ -174,7 +202,7 @@ export function IgComments({ post, comments }: Props) {
             {post.caption ? post.caption.slice(0, 80) + (post.caption.length > 80 ? "…" : "") : "No caption"}
           </p>
           <p className="ig-comments-post-stats">
-            ❤️ {post.likeCount.toLocaleString()} · 💬 {post.commentsCount.toLocaleString()} comments
+            {post.likeCount.toLocaleString()} likes · {post.commentsCount.toLocaleString()} comments
           </p>
           {post.permalink && (
             <a href={post.permalink} target="_blank" rel="noopener noreferrer" className="ig-comments-permalink">
@@ -191,11 +219,53 @@ export function IgComments({ post, comments }: Props) {
         </button>
       </div>
 
+      {posts.length > 1 && (
+        <div className="ig-comments-post-strip" aria-label="Post selector">
+          {posts.slice(0, 12).map((item) => {
+            const thumb = item.thumbnailUrl ?? item.mediaUrl;
+            return (
+              <Link
+                key={item.id}
+                href={`/instagram?tab=comments&post=${item.id}`}
+                className={`ig-comments-post-chip ${item.id === post.id ? "ig-comments-post-chip-active" : ""}`}
+                title={item.caption ?? "No caption"}
+              >
+                {thumb ? (
+                  <img src={thumb} alt="" className="ig-comments-post-chip-img" />
+                ) : (
+                  <span className="ig-comments-post-chip-placeholder">Post</span>
+                )}
+                <span>{item.commentsCount.toLocaleString()}</span>
+              </Link>
+            );
+          })}
+        </div>
+      )}
+
       {msg && (
         <div className={`ig-comments-msg ${msg.type === "err" ? "ig-comments-msg-err" : "ig-comments-msg-ok"}`}>
           {msg.text}
         </div>
       )}
+
+      <div className="ig-comments-toolbar">
+        <div className="ig-comments-stats">
+          <span>{needsReplyCount} need reply</span>
+          <span>{repliedCount} replied</span>
+        </div>
+        <div className="ig-segmented" aria-label="Filter comments">
+          {COMMENT_FILTERS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => setFilter(item.id)}
+              className={`ig-segment ${filter === item.id ? "ig-segment-active" : ""}`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {/* Comment list */}
       <div className="ig-comments-list">
@@ -203,8 +273,12 @@ export function IgComments({ post, comments }: Props) {
           <div className="ig-comments-none">
             No comments loaded yet. Click Load to fetch from Instagram.
           </div>
+        ) : visibleComments.length === 0 ? (
+          <div className="ig-comments-none">
+            Nothing in this filter.
+          </div>
         ) : (
-          withReplies.map((c) => (
+          visibleComments.map((c) => (
             <CommentRow key={c.id} comment={c} onReply={handleSetReply} />
           ))
         )}
@@ -218,6 +292,20 @@ export function IgComments({ post, comments }: Props) {
             <button onClick={() => { setReplyTarget(null); setReplyText(""); }} className="ig-reply-cancel">
               ✕
             </button>
+          </div>
+        )}
+        {replyTarget && (
+          <div className="ig-quick-replies">
+            {QUICK_REPLIES.map((reply) => (
+              <button
+                key={reply}
+                type="button"
+                onClick={() => setReplyText(`@${replyTarget.username} ${reply}`)}
+                className="ig-quick-reply"
+              >
+                {reply}
+              </button>
+            ))}
           </div>
         )}
         <div className="ig-reply-row">

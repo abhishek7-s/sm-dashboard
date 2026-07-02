@@ -86,12 +86,12 @@ async function getIgDashboardData(selectedPostId?: string) {
 }
 
 const TABS = [
-  { id: "feed", label: "Feed", icon: "🏠" },
-  { id: "comments", label: "Comments", icon: "💬" },
-  { id: "insights", label: "Insights", icon: "📊" },
-  { id: "compose", label: "Compose", icon: "✏️" },
-  { id: "dms", label: "DMs", icon: "📩" },
-  { id: "monitor", label: "Monitor", icon: "🔍" },
+  { id: "feed", label: "Feed", icon: "Grid" },
+  { id: "comments", label: "Comments", icon: "Chat" },
+  { id: "insights", label: "Insights", icon: "Chart" },
+  { id: "compose", label: "Compose", icon: "Post" },
+  { id: "dms", label: "DMs", icon: "Inbox" },
+  { id: "monitor", label: "Monitor", icon: "Watch" },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -121,6 +121,11 @@ export default async function InstagramPage({ searchParams }: PageProps) {
   }
 
   const isConnected = account?.status === "CONNECTED";
+  const unrepliedComments = selectedPostComments.filter(
+    (comment) => !comment.parentCommentId && comment.replyStatus !== "SENT",
+  ).length;
+  const openDmThreads = dms.filter((d) => d.withinWindow).length;
+  const trackedPosts = monitorTargets.reduce((sum, target) => sum + target.posts.length, 0);
 
   return (
     <main className="ig-page">
@@ -228,6 +233,7 @@ export default async function InstagramPage({ searchParams }: PageProps) {
                 <IgComments
                   post={selectedPost}
                   comments={selectedPostComments}
+                  posts={posts}
                 />
               )}
 
@@ -280,18 +286,16 @@ export default async function InstagramPage({ searchParams }: PageProps) {
                   <span className="ig-quick-stat-label">Posts synced</span>
                 </div>
                 <div className="ig-quick-stat">
-                  <span className="ig-quick-stat-value">{dms.length}</span>
-                  <span className="ig-quick-stat-label">DM threads</span>
+                  <span className="ig-quick-stat-value">{unrepliedComments}</span>
+                  <span className="ig-quick-stat-label">Need replies</span>
                 </div>
                 <div className="ig-quick-stat">
-                  <span className="ig-quick-stat-value">{monitorTargets.length}</span>
-                  <span className="ig-quick-stat-label">Monitored</span>
-                </div>
-                <div className="ig-quick-stat">
-                  <span className="ig-quick-stat-value">
-                    {dms.filter((d) => d.withinWindow).length}
-                  </span>
+                  <span className="ig-quick-stat-value">{openDmThreads}</span>
                   <span className="ig-quick-stat-label">DMs open</span>
+                </div>
+                <div className="ig-quick-stat">
+                  <span className="ig-quick-stat-value">{trackedPosts}</span>
+                  <span className="ig-quick-stat-label">Tracked posts</span>
                 </div>
               </div>
             )}
