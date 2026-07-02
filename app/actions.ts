@@ -1,6 +1,8 @@
 "use server";
 
 import { prisma } from "@/lib/db";
+import { analyzeChatMessages } from "@/lib/ai/chat-analysis";
+import type { ChatAnalysisResult } from "@/lib/ai/chat-analysis";
 import { whatsappSendPolicy } from "@/lib/queue/message-policy";
 import { revalidatePath } from "next/cache";
 import { v4 as uuidv4 } from "uuid";
@@ -123,4 +125,53 @@ export async function cancelBroadcastJob(jobId: string) {
   ]);
   revalidatePath("/");
   return { success: true };
+}
+
+export async function analyzeOpenChat(
+  conversationId: string,
+): Promise<{ analysis: ChatAnalysisResult } | { error: string }> {
+  const conversation = await prisma.conversation.findFirst({
+    where: {
+      id: conversationId,
+      channelAccount: {
+        type: "WHATSAPP",
+      },
+    },
+    select: {
+      id: true,
+      messages: {
+        orderBy: {
+          sentAt: "desc",
+        },
+        take: 120,
+        select: {
+          direction: true,
+          body: true,
+          sentAt: true,
+        },
+      },
+    },
+  });
+
+  if (!conversation) {
+    return { error: "Conversation not found" };
+  }
+
+  try {
+    const analysis = await analyzeChatMessages(
+      [...conversation.messages]
+        .reverse()
+        .map((message) => ({
+          direction: message.direction,
+          body: message.body ?? "",
+          sentAt: message.sentAt,
+        })),
+    );
+
+    return { analysis };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : "Unable to analyze this chat.",
+    };
+  }
 }

@@ -130,37 +130,40 @@ export default async function InstagramPage({ searchParams }: PageProps) {
   return (
     <main className="ig-page">
       {/* Sidebar */}
-      <aside className="hidden w-20 shrink-0 flex-col items-center justify-between bg-slate-900 py-6 shadow-2xl lg:flex relative z-10 border-r border-slate-800">
-        <div className="flex flex-col items-center gap-5">
-          <div className="grid size-11 place-items-center rounded-lg bg-[#24d366] text-base font-bold text-[#10241d]">
-            SM
-          </div>
-          <nav className="flex flex-col gap-4 mt-8" aria-label="Main">
+      <aside className="ig-sidebar">
+        <div className="ig-sidebar-top">
+          {/* Logo */}
+          <div className="ig-sidebar-logo">SM</div>
+
+          {/* Nav */}
+          <nav className="ig-sidebar-nav" aria-label="Platform">
             <Link
               href="/"
-              className="grid size-12 place-items-center rounded-xl text-sm font-semibold transition bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white"
+              className="ig-sidebar-navbtn ig-sidebar-navbtn-inactive"
               aria-label="WhatsApp"
             >
               WA
             </Link>
-            <button
-              className="grid size-12 place-items-center rounded-xl text-sm font-bold transition bg-emerald-500 text-white shadow-[0_0_15px_rgba(16,185,129,0.5)]"
-              type="button"
-              aria-current="page"
+            <Link
+              href="/instagram"
+              className="ig-sidebar-navbtn ig-sidebar-navbtn-active"
+              aria-label="Instagram"
             >
-              IG
-            </button>
+              <span className="ig-sidebar-ig-icon">IG</span>
+            </Link>
           </nav>
         </div>
-        <div className="grid size-10 place-items-center rounded-full bg-gradient-to-tr from-emerald-500 to-teal-400 text-sm font-bold text-white shadow-lg overflow-hidden">
+
+        {/* Account avatar */}
+        <div className="ig-sidebar-avatar">
           {account?.igProfilePicUrl ? (
             <img
               src={account.igProfilePicUrl}
               alt={account.igUsername ?? "IG"}
-              className="size-full object-cover"
+              className="ig-sidebar-avatar-img"
             />
           ) : (
-            getInitials(account?.displayName ?? "IG")
+            <span>{getInitials(account?.displayName ?? "IG")}</span>
           )}
         </div>
       </aside>

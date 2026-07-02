@@ -7,6 +7,7 @@ import { AutoRefresher } from "./components/auto-refresher";
 import { BroadcastModal } from "./components/broadcast-modal";
 import { QueuePanel } from "./components/queue-panel";
 import { BroadcastButton } from "./components/broadcast-button";
+import { ChatAnalysisPanel } from "./components/chat-analysis-panel";
 
 export const dynamic = "force-dynamic";
 
@@ -70,6 +71,15 @@ function normalizePhone(value?: string | null) {
   }
 
   return value.startsWith("+") ? value : `+${value}`;
+}
+
+function hasReadOnlyMetadata(metadata: unknown) {
+  return (
+    typeof metadata === "object" &&
+    metadata !== null &&
+    "readOnly" in metadata &&
+    metadata.readOnly === true
+  );
 }
 
 type PageProps = {
@@ -272,7 +282,7 @@ export default async function Home({ searchParams }: PageProps) {
     : selectedConversation?.externalId ?? "Connect WhatsApp to load chats";
 
   const isReadOnly = selectedConversation
-    ? (selectedConversation.metadata as any)?.readOnly === true
+    ? hasReadOnlyMetadata(selectedConversation.metadata)
     : false;
 
   return (
@@ -529,6 +539,8 @@ export default async function Home({ searchParams }: PageProps) {
                   {messagesCount.toLocaleString()} messages stored
                 </p> */}
               </section>
+
+              <ChatAnalysisPanel conversationId={selectedConversation?.id} />
 
               <section className="border-b border-black/10 p-4">
                 <div className="flex items-center justify-between">
