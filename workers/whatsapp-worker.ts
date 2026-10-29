@@ -5,6 +5,7 @@ import makeWASocket, {
   downloadMediaMessage,
   fetchLatestWaWebVersion,
   useMultiFileAuthState as createMultiFileAuthState,
+  type AnyMessageContent,
   type WAMessage,
 } from "baileys";
 import pino from "pino";
@@ -197,7 +198,7 @@ function buildOutgoingContent(
   body: string | null,
   mediaUrl: string | null,
   mediaMimeType: string | null,
-): any {
+): AnyMessageContent {
   if (!mediaUrl) {
     return { text: body || "" };
   }
@@ -209,7 +210,7 @@ function buildOutgoingContent(
   if (isDocument) {
     return {
       document: { url: filepath },
-      mimetype: mediaMimeType,
+      mimetype: mediaMimeType ?? "application/octet-stream",
       fileName: path.basename(mediaUrl),
       caption,
     };
@@ -560,7 +561,7 @@ async function startWhatsAppWorker() {
       let mediaMimeType: string | undefined;
 
       try {
-        const messageType = getContentType(message.message);
+        const messageType = getContentType(message.message ?? undefined);
         const isMedia = messageType === "imageMessage" || messageType === "videoMessage" || messageType === "audioMessage" || messageType === "documentMessage" || messageType === "stickerMessage";
 
         if (isMedia && message.message) {
@@ -574,8 +575,10 @@ async function startWhatsAppWorker() {
             }
           );
           
-          const mediaMessage = message.message[messageType as keyof typeof message.message] as any;
-          mediaMimeType = mediaMessage?.mimetype;
+          const mediaMessage = message.message[messageType as keyof typeof message.message] as
+            | { mimetype?: string | null }
+            | undefined;
+          mediaMimeType = mediaMessage?.mimetype ?? undefined;
           
           let ext = "";
           if (mediaMimeType) {

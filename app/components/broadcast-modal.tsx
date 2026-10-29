@@ -18,7 +18,6 @@ type BroadcastModalProps = {
 };
 
 export function BroadcastModal({ contacts, onClose }: BroadcastModalProps) {
-  const [mounted, setMounted] = useState(false);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [body, setBody] = useState("");
@@ -33,8 +32,8 @@ export function BroadcastModal({ contacts, onClose }: BroadcastModalProps) {
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
 
+  // Only rendered after a click, so this always runs in the browser.
   useEffect(() => {
-    setMounted(true);
     // Prevent background scrolling when modal is open
     document.body.style.overflow = 'hidden';
     return () => {
@@ -123,7 +122,7 @@ export function BroadcastModal({ contacts, onClose }: BroadcastModalProps) {
     });
   }
 
-  if (!mounted || typeof document === 'undefined') return null;
+  if (typeof document === 'undefined') return null;
 
   return createPortal(
     <div

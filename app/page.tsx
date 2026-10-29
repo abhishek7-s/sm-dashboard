@@ -4,7 +4,6 @@ import Link from "next/link";
 import { MessageScrollPane } from "./components/message-scroll-pane";
 import { ChatInput } from "./components/chat-input";
 import { AutoRefresher } from "./components/auto-refresher";
-import { BroadcastModal } from "./components/broadcast-modal";
 import { QueuePanel } from "./components/queue-panel";
 import { BroadcastButton } from "./components/broadcast-button";
 import { ChatAnalysisPanel } from "./components/chat-analysis-panel";
