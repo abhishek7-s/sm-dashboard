@@ -8,6 +8,8 @@ import { IgInsights } from "./components/ig-insights";
 import { IgCompose } from "./components/ig-compose";
 import { IgDm } from "./components/ig-dm";
 import { IgMonitor } from "./components/ig-monitor";
+import { LogoutButton } from "../components/logout-button";
+import { requireUser } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
 
@@ -106,6 +108,7 @@ function getInitials(name: string) {
 }
 
 export default async function InstagramPage({ searchParams }: PageProps) {
+  await requireUser();
   const { tab, post, connected, error } = await searchParams;
   const activeTab: TabId = (TABS.some((t) => t.id === tab) ? tab : "feed") as TabId;
 
@@ -154,6 +157,7 @@ export default async function InstagramPage({ searchParams }: PageProps) {
           </nav>
         </div>
 
+        <div className="ig-sidebar-bottom">
         {/* Account avatar */}
         <div className="ig-sidebar-avatar">
           {account?.igProfilePicUrl ? (
@@ -165,6 +169,8 @@ export default async function InstagramPage({ searchParams }: PageProps) {
           ) : (
             <span>{getInitials(account?.displayName ?? "IG")}</span>
           )}
+        </div>
+        <LogoutButton label="⎋" className="ig-sidebar-logout" />
         </div>
       </aside>
 

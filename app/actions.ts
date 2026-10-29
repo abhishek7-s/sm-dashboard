@@ -1,13 +1,16 @@
 "use server";
 
 import { prisma } from "@/lib/db";
+import { requireUser } from "@/lib/auth/session";
 import { analyzeChatMessages } from "@/lib/ai/chat-analysis";
 import type { ChatAnalysisResult } from "@/lib/ai/chat-analysis";
 import { whatsappSendPolicy } from "@/lib/queue/message-policy";
+import { requestWhatsAppLogout } from "@/lib/whatsapp/session-state";
 import { revalidatePath } from "next/cache";
 import { v4 as uuidv4 } from "uuid";
 
 export async function sendChatMessage(conversationId: string, body: string, mediaUrl?: string, mediaMimeType?: string) {
+  await requireUser();
   if (!body.trim() && !mediaUrl) {
     return { error: "Message cannot be empty" };
   }
@@ -30,7 +33,7 @@ export async function sendChatMessage(conversationId: string, body: string, medi
       contactId: contactId,
       externalId: `pending-${uuidv4()}`,
       direction: "OUTBOUND",
-      kind: mediaUrl ? (mediaMimeType?.includes('image') ? "IMAGE" : mediaMimeType?.includes('video') ? "VIDEO" : "DOCUMENT") : "TEXT",
+      kind: mediaUrl ? (mediaMimeType?.includes('image') ? "IMAGE" : mediaMimeType?.includes('video') ? "VIDEO" : mediaMimeType?.includes('audio') ? "AUDIO" : "DOCUMENT") : "TEXT",
       status: "PENDING",
       body: body.trim(),
       mediaUrl,
@@ -42,11 +45,34 @@ export async function sendChatMessage(conversationId: string, body: string, medi
   return { success: true };
 }
 
+export async function retryChatMessage(messageId: string) {
+  await requireUser();
+  const result = await prisma.message.updateMany({
+    where: { id: messageId, direction: "OUTBOUND", status: "FAILED" },
+    data: { status: "PENDING", failureReason: null, failedAt: null },
+  });
+
+  if (result.count === 0) {
+    return { error: "This message can no longer be retried." };
+  }
+
+  revalidatePath("/");
+  return { success: true };
+}
+
+export async function disconnectWhatsApp() {
+  await requireUser();
+  await requestWhatsAppLogout();
+  revalidatePath("/");
+  return { success: true };
+}
+
 export async function createBroadcastJob(
   body: string,
   contactIds: string[],
   options?: { delaySeconds?: number; jitterSeconds?: number; scheduledFor?: string; mediaUrl?: string; mediaMimeType?: string },
 ) {
+  await requireUser();
   if (!body.trim() && !options?.mediaUrl) {
     return { error: "Message body cannot be empty" };
   }
@@ -95,6 +121,7 @@ export async function createBroadcastJob(
 }
 
 export async function pauseBroadcastJob(jobId: string) {
+  await requireUser();
   await prisma.messageQueueJob.update({
     where: { id: jobId },
     data: { status: "PAUSED", pausedAt: new Date() },
@@ -104,6 +131,7 @@ export async function pauseBroadcastJob(jobId: string) {
 }
 
 export async function resumeBroadcastJob(jobId: string) {
+  await requireUser();
   await prisma.messageQueueJob.update({
     where: { id: jobId },
     data: { status: "QUEUED", pausedAt: null },
@@ -113,6 +141,7 @@ export async function resumeBroadcastJob(jobId: string) {
 }
 
 export async function cancelBroadcastJob(jobId: string) {
+  await requireUser();
   await prisma.$transaction([
     prisma.messageQueueRecipient.updateMany({
       where: { queueJobId: jobId, status: "PENDING" },
@@ -130,6 +159,7 @@ export async function cancelBroadcastJob(jobId: string) {
 export async function analyzeOpenChat(
   conversationId: string,
 ): Promise<{ analysis: ChatAnalysisResult } | { error: string }> {
+  await requireUser();
   const conversation = await prisma.conversation.findFirst({
     where: {
       id: conversationId,

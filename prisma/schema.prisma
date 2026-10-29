@@ -81,6 +81,37 @@ enum QueueRecipientStatus {
   SKIPPED
 }
 
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+enum WhatsAppSessionStatus {
+  STARTING
+  QR_READY
+  CONNECTED
+  RECONNECTING
+  LOGGED_OUT
+  STOPPED
+}
+
+// Single row written by the WhatsApp worker so the dashboard can show the
+// linking QR code, live connection state and whether the worker is running.
+model WhatsAppSession {
+  id                 String                @id @default("primary")
+  status             WhatsAppSessionStatus @default(STARTING)
+  qr                 String?
+  qrUpdatedAt        DateTime?
+  lastError          String?
+  heartbeatAt        DateTime?
+  logoutRequestedAt  DateTime?
+  updatedAt          DateTime              @updatedAt
+}
+
 model ChannelAccount {
   id                    String               @id @default(cuid())
   type                  ChannelType

@@ -2,6 +2,12 @@ This is a social messaging dashboard built with Next.js. The WhatsApp MVP uses
 Baileys as a long-running worker process that connects through WhatsApp Web
 linked devices.
 
+## Sign-in
+
+The dashboard requires a login. Set `AUTH_SECRET` in `.env` to a random string of
+at least 32 characters (`openssl rand -hex 32`). On first visit, `/login` asks you
+to create the owner account; after that it is a normal sign-in page.
+
 ## WhatsApp Worker
 
 Make sure `DATABASE_URL` is set in `.env`, then create/update the database
@@ -18,7 +24,7 @@ Start the WhatsApp worker in a separate terminal:
 npm run whatsapp:worker
 ```
 
-On first run it prints a QR code. Scan it from WhatsApp:
+On first run it shows a QR code on the dashboard home page (and in the terminal). Scan it from WhatsApp:
 
 ```txt
 WhatsApp > Linked devices > Link a device
@@ -31,7 +37,8 @@ The local Baileys auth/session files are stored in:
 ```
 
 That folder is ignored by Git and should not be committed. To relink the account,
-stop the worker and delete that folder.
+use "Unlink this phone" in the dashboard's details panel; the worker clears that
+folder and shows a new QR code.
 
 When connected, incoming WhatsApp messages are persisted into the dashboard
 database as contacts, conversations, and messages.

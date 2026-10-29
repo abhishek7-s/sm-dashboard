@@ -132,6 +132,32 @@
   overflow: hidden;
 }
 
+.ig-sidebar-bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.ig-sidebar-logout {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  color: var(--ig-text-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.ig-sidebar-logout:hover {
+  color: var(--ig-text);
+  background: rgba(255,255,255,0.08);
+}
+
 .ig-sidebar-avatar-img {
   width: 100%;
   height: 100%;
@@ -2050,8 +2076,30 @@
 .ig-monitor-post-item:hover .ig-monitor-post-overlay { opacity: 1; }
 
 @media (max-width: 1080px) {
+  /* Stack the account card above the tabs instead of hiding it, so
+     Connect / Sync / Disconnect stay reachable on tablets and phones. */
+  .ig-layout {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .ig-content-area,
+  .ig-tab-content {
+    flex: 1 0 auto;
+    overflow: visible;
+  }
+
   .ig-right-sidebar {
-    display: none;
+    order: -1;
+    width: 100%;
+    flex-shrink: 0;
+    overflow: visible;
+    border-left: none;
+    border-bottom: 1px solid var(--ig-border);
+  }
+
+  .ig-quick-stats {
+    grid-template-columns: repeat(4, 1fr);
   }
 }
 
@@ -2119,7 +2167,7 @@
 
   .ig-compose-type-grid,
   .ig-quick-stats {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr 1fr;
   }
 }
 

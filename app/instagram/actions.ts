@@ -1,6 +1,7 @@
 "use server";
 
 import { prisma } from "@/lib/db";
+import { requireUser } from "@/lib/auth/session";
 import { revalidatePath } from "next/cache";
 import {
   getMedia,
@@ -56,6 +57,7 @@ async function getIgAccount() {
 
 /** Sync latest posts from Instagram to the database */
 export async function syncInstagramPosts() {
+  await requireUser();
   const account = await getIgAccount();
   if (!account) return { error: "No connected Instagram account" };
 
@@ -77,6 +79,7 @@ export async function syncInstagramPosts() {
 
 /** Sync insights for a specific post */
 export async function syncPostInsights(postDbId: string) {
+  await requireUser();
   const account = await getIgAccount();
   if (!account) return { error: "No connected Instagram account" };
 
@@ -99,6 +102,7 @@ export async function syncPostInsights(postDbId: string) {
 
 /** Sync insights for all posts */
 export async function syncAllInsights() {
+  await requireUser();
   const account = await getIgAccount();
   if (!account) return { error: "No connected Instagram account" };
 
@@ -122,6 +126,7 @@ export async function syncAllInsights() {
 
 /** Sync comments for a specific post from the API */
 export async function syncPostComments(postDbId: string) {
+  await requireUser();
   const account = await getIgAccount();
   if (!account) return { error: "No connected Instagram account" };
 
@@ -143,6 +148,7 @@ export async function syncPostComments(postDbId: string) {
 
 /** Reply to an Instagram comment */
 export async function replyToIgComment(commentDbId: string, text: string) {
+  await requireUser();
   if (!text.trim()) return { error: "Reply text cannot be empty" };
 
   const account = await getIgAccount();
@@ -176,6 +182,7 @@ export async function publishInstagramPost(opts: {
   caption?: string;
   mediaType: PublishMediaType;
 }) {
+  await requireUser();
   const account = await getIgAccount();
   if (!account) return { error: "No connected Instagram account" };
 
@@ -218,6 +225,7 @@ export async function publishInstagramPost(opts: {
 
 /** Sync DM conversations from Instagram */
 export async function syncInstagramDMs() {
+  await requireUser();
   const account = await getIgAccount();
   if (!account) return { error: "No connected Instagram account" };
 
@@ -240,6 +248,7 @@ export async function syncInstagramDMs() {
 
 /** Send a DM (only works if within 24-hour messaging window) */
 export async function sendInstagramDM(recipientIgId: string, text: string) {
+  await requireUser();
   if (!text.trim()) return { error: "Message cannot be empty" };
 
   const account = await getIgAccount();
@@ -263,6 +272,7 @@ export async function sendInstagramDM(recipientIgId: string, text: string) {
 
 /** Add a new Instagram account to monitor */
 export async function addMonitorTarget(username: string) {
+  await requireUser();
   const cleaned = username.trim().replace(/^@/, "");
   if (!cleaned) return { error: "Username cannot be empty" };
 
@@ -309,6 +319,7 @@ export async function addMonitorTarget(username: string) {
 
 /** Remove a monitor target */
 export async function removeMonitorTarget(targetId: string) {
+  await requireUser();
   await prisma.igMonitorTarget.delete({ where: { id: targetId } });
   revalidatePath("/instagram");
   return { success: true };
@@ -316,6 +327,7 @@ export async function removeMonitorTarget(targetId: string) {
 
 /** Toggle a monitor target on/off */
 export async function toggleMonitorTarget(targetId: string, enabled: boolean) {
+  await requireUser();
   await prisma.igMonitorTarget.update({
     where: { id: targetId },
     data: { enabled },
@@ -326,6 +338,7 @@ export async function toggleMonitorTarget(targetId: string, enabled: boolean) {
 
 /** Sync all enabled monitor targets */
 export async function syncMonitorTargets() {
+  await requireUser();
   const account = await getIgAccount();
   if (!account) return { error: "No connected Instagram account" };
 
@@ -358,6 +371,7 @@ export async function syncMonitorTargets() {
 
 /** Disconnect the Instagram account */
 export async function disconnectInstagram() {
+  await requireUser();
   const account = await prisma.channelAccount.findFirst({
     where: { provider: "INSTAGRAM_GRAPH_API" },
     orderBy: { updatedAt: "desc" },

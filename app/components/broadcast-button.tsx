@@ -17,10 +17,12 @@ export function BroadcastButton({ contacts }: { contacts: Contact[] }) {
     <>
       <button
         onClick={() => setOpen(true)}
-        className="rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 px-5 py-2 text-sm font-bold text-white shadow-md shadow-emerald-500/20 transition hover:opacity-90"
+        className="rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 px-3 py-2 text-sm font-bold text-white shadow-md shadow-emerald-500/20 transition hover:opacity-90 sm:px-5"
         type="button"
+        aria-label="Broadcast message"
       >
-        📢 Broadcast
+        <span aria-hidden>📢</span>
+        <span className="hidden sm:inline"> Broadcast</span>
       </button>
       {open && (
         <BroadcastModal contacts={contacts} onClose={() => setOpen(false)} />

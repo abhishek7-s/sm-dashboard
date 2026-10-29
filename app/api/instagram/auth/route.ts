@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { exchangeCodeForToken, getIgAccountId } from "@/lib/instagram/auth";
 import { upsertIgChannelAccount } from "@/lib/instagram/persistence";
+import { requireUser } from "@/lib/auth/session";
 
 export async function GET(request: NextRequest) {
+  await requireUser();
   const searchParams = request.nextUrl.searchParams;
   const code = searchParams.get("code");
   const error = searchParams.get("error");

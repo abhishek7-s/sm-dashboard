@@ -2,8 +2,16 @@ import { NextResponse } from "next/server";
 import { writeFile, mkdir } from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
+import { getCurrentUser } from "@/lib/auth/session";
+
+// WhatsApp rejects most media above this size.
+const MAX_UPLOAD_BYTES = 16 * 1024 * 1024;
 
 export async function POST(request: Request) {
+  if (!(await getCurrentUser())) {
+    return NextResponse.json({ error: "Please sign in again." }, { status: 401 });
+  }
+
   try {
     const formData = await request.formData();
     const file = formData.get("file") as File;
@@ -12,6 +20,13 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: "No file uploaded" },
         { status: 400 }
+      );
+    }
+
+    if (file.size > MAX_UPLOAD_BYTES) {
+      return NextResponse.json(
+        { error: "File is too large. The limit is 16 MB." },
+        { status: 413 }
       );
     }
 

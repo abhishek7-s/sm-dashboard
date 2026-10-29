@@ -3,6 +3,7 @@ import makeWASocket, {
   DisconnectReason,
   getContentType,
   downloadMediaMessage,
+  fetchLatestWaWebVersion,
   useMultiFileAuthState as createMultiFileAuthState,
   type WAMessage,
 } from "baileys";
@@ -21,6 +22,12 @@ import {
   persistWhatsAppMessage,
   upsertWhatsAppChannelAccount,
 } from "../lib/whatsapp/persistence.ts";
+import {
+  HEARTBEAT_INTERVAL_MS,
+  clearLogoutRequest,
+  recordWorkerHeartbeat,
+  setWhatsAppSessionStatus,
+} from "../lib/whatsapp/session-state.ts";
 
 type WhatsAppSocket = ReturnType<typeof makeWASocket>;
 
@@ -46,7 +53,9 @@ let activeSocket: WhatsAppSocket | undefined;
 let reconnectAttempts = 0;
 let reconnectTimer: NodeJS.Timeout | undefined;
 let sendPollTimer: NodeJS.Timeout | undefined;
+let heartbeatTimer: NodeJS.Timeout | undefined;
 let shuttingDown = false;
+let relinking = false;
 
 const logger = pino({
   level: process.env.WHATSAPP_LOG_LEVEL ?? "info",
@@ -183,18 +192,67 @@ function getMessageContact(message: WAMessage) {
   };
 }
 
+/** Builds the Baileys payload for a text message or an uploaded attachment. */
+function buildOutgoingContent(
+  body: string | null,
+  mediaUrl: string | null,
+  mediaMimeType: string | null,
+): any {
+  if (!mediaUrl) {
+    return { text: body || "" };
+  }
+
+  const filepath = path.join(process.cwd(), "public", mediaUrl);
+  const caption = body || undefined;
+  const isDocument = mediaMimeType?.includes('pdf') || mediaMimeType?.includes('document') || mediaMimeType?.includes('msword') || mediaMimeType?.includes('spreadsheet') || mediaMimeType?.includes('csv');
+
+  if (isDocument) {
+    return {
+      document: { url: filepath },
+      mimetype: mediaMimeType,
+      fileName: path.basename(mediaUrl),
+      caption,
+    };
+  }
+  if (mediaMimeType?.includes('video')) {
+    return { video: { url: filepath }, caption };
+  }
+  if (mediaMimeType?.includes('audio')) {
+    return { audio: { url: filepath }, ptt: true };
+  }
+  if (mediaMimeType?.includes('image')) {
+    return { image: { url: filepath }, caption };
+  }
+  return {
+    document: { url: filepath },
+    mimetype: mediaMimeType ?? "application/octet-stream",
+    fileName: path.basename(mediaUrl),
+    caption,
+  };
+}
+
 async function processPendingMessages(sock: WhatsAppSocket) {
   const pendingMessages = await prisma.message.findMany({
     where: { status: "PENDING", direction: "OUTBOUND" },
     include: { conversation: true },
+    orderBy: { createdAt: "asc" },
     take: 10,
   });
 
   for (const msg of pendingMessages) {
     const jid = msg.conversation.externalId;
-    if (!jid) continue;
+    if (!jid) {
+      await prisma.message.update({
+        where: { id: msg.id },
+        data: { status: "FAILED", failureReason: "This chat has no WhatsApp address.", failedAt: new Date() },
+      });
+      continue;
+    }
     try {
-      const sentMsg = await sock.sendMessage(jid, { text: msg.body || "" });
+      const sentMsg = await sock.sendMessage(
+        jid,
+        buildOutgoingContent(msg.body, msg.mediaUrl, msg.mediaMimeType),
+      );
       await prisma.message.update({
         where: { id: msg.id },
         data: {
@@ -293,37 +351,10 @@ async function processQueueJobs(sock: WhatsAppSocket) {
   const jid = conversation?.externalId ?? recipient.contact.externalId;
 
   try {
-    let msgOptions: any = { text: job.body };
-    if (job.mediaUrl) {
-      const filepath = path.join(process.cwd(), "public", job.mediaUrl);
-      const isDocument = job.mediaMimeType?.includes('pdf') || job.mediaMimeType?.includes('document') || job.mediaMimeType?.includes('msword') || job.mediaMimeType?.includes('spreadsheet') || job.mediaMimeType?.includes('csv');
-      
-      if (isDocument) {
-        msgOptions = {
-          document: { url: filepath },
-          mimetype: job.mediaMimeType,
-          fileName: "Attachment",
-          caption: job.body || undefined
-        };
-      } else if (job.mediaMimeType?.includes('video')) {
-        msgOptions = {
-          video: { url: filepath },
-          caption: job.body || undefined
-        };
-      } else if (job.mediaMimeType?.includes('audio')) {
-         msgOptions = {
-          audio: { url: filepath },
-          ptt: true
-        };
-      } else {
-        msgOptions = {
-          image: { url: filepath },
-          caption: job.body || undefined
-        };
-      }
-    }
-
-    const sentMsg = await sock.sendMessage(jid, msgOptions);
+    const sentMsg = await sock.sendMessage(
+      jid,
+      buildOutgoingContent(job.body, job.mediaUrl, job.mediaMimeType),
+    );
     const now = new Date();
     await prisma.messageQueueRecipient.update({
       where: { id: recipient.id },
@@ -389,10 +420,61 @@ async function processQueueJobs(sock: WhatsAppSocket) {
   queueNextSendAt = Date.now() + getJitteredDelay(job.delaySeconds, job.jitterSeconds);
 }
 
+/** Wipes the stored WhatsApp login and starts over so a fresh QR code is shown. */
+async function resetAuthAndRelink() {
+  if (relinking || shuttingDown) {
+    return;
+  }
+  relinking = true;
+  try {
+    if (sendPollTimer) clearInterval(sendPollTimer);
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = undefined;
+    }
+    await setWhatsAppSessionStatus("LOGGED_OUT", { qr: null });
+    await fs.rm(authDir, { recursive: true, force: true });
+    await clearLogoutRequest();
+    reconnectAttempts = 0;
+    logger.info("WhatsApp auth cleared; starting a new link session");
+    await startWhatsAppWorker();
+  } finally {
+    relinking = false;
+  }
+}
+
+/** Lets the dashboard see the worker is alive, and picks up "unlink" requests. */
+function startHeartbeat() {
+  const beat = async () => {
+    try {
+      const logoutRequested = await recordWorkerHeartbeat();
+      if (logoutRequested && !relinking) {
+        logger.info("Dashboard requested WhatsApp unlink");
+        try {
+          // Triggers connection.update(close, loggedOut), which relinks.
+          await activeSocket?.logout();
+        } catch {
+          await resetAuthAndRelink();
+        }
+        await clearLogoutRequest();
+      }
+    } catch (error) {
+      logger.error({ error }, "Failed to record worker heartbeat");
+    }
+  };
+
+  void beat();
+  heartbeatTimer = setInterval(beat, HEARTBEAT_INTERVAL_MS);
+}
+
 async function startWhatsAppWorker() {
   const { state, saveCreds } = await createMultiFileAuthState(authDir);
+  // WhatsApp rejects linking (405) when Baileys' bundled web version goes stale.
+  const { version, isLatest } = await fetchLatestWaWebVersion({});
+  logger.info({ version, isLatest }, "Using WhatsApp Web version");
 
   const sock = makeWASocket({
+    version,
     auth: state,
     browser: Browsers.macOS("SM Dashboard"),
     logger,
@@ -407,12 +489,14 @@ async function startWhatsAppWorker() {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      logger.info("Scan this QR code with WhatsApp > Linked devices.");
+      logger.info("Scan this QR code with WhatsApp > Linked devices (also shown in the dashboard).");
       qrcode.generate(qr, { small: true });
+      await setWhatsAppSessionStatus("QR_READY", { qr });
     }
 
     if (connection === "open") {
       reconnectAttempts = 0;
+      await setWhatsAppSessionStatus("CONNECTED", { qr: null, lastError: null });
       await upsertWhatsAppChannelAccount(sock.user);
       void requestHistoryBackfill(sock);
 
@@ -453,13 +537,16 @@ async function startWhatsAppWorker() {
       if (shouldReconnect) {
         await markWhatsAppChannelDisconnected();
         if (sendPollTimer) clearInterval(sendPollTimer);
+        if (!shuttingDown) {
+          await setWhatsAppSessionStatus("RECONNECTING", {
+            lastError: lastDisconnect?.error?.message ?? null,
+          });
+        }
         scheduleReconnect();
       } else {
         await markWhatsAppChannelDisconnected();
-        if (sendPollTimer) clearInterval(sendPollTimer);
-        logger.error(
-          `WhatsApp logged out. Delete ${authDir} and run the worker again to relink.`,
-        );
+        logger.warn("WhatsApp logged out; clearing auth so it can be relinked");
+        await resetAuthAndRelink();
       }
     }
   });
@@ -632,16 +719,23 @@ async function stopWhatsAppWorker() {
   if (sendPollTimer) {
     clearInterval(sendPollTimer);
   }
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+  }
 
   logger.info("Stopping WhatsApp worker");
   await activeSocket?.end(undefined);
+  await setWhatsAppSessionStatus("STOPPED", { qr: null }).catch(() => {});
   process.exit(0);
 }
 
 process.once("SIGINT", () => void stopWhatsAppWorker());
 process.once("SIGTERM", () => void stopWhatsAppWorker());
 
-startWhatsAppWorker().catch((error) => {
-  logger.fatal({ error }, "WhatsApp worker crashed");
-  process.exit(1);
-});
+startHeartbeat();
+setWhatsAppSessionStatus("STARTING", { qr: null })
+  .then(() => startWhatsAppWorker())
+  .catch((error) => {
+    logger.fatal({ error }, "WhatsApp worker crashed");
+    process.exit(1);
+  });
